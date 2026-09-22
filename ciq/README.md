@@ -30,7 +30,9 @@ So the renderer is built around *number of calls*, not pixels:
 
 - **Every textured wall face is one `drawScaledBitmap`** of a prebuilt 1×32
   texture column (4 textures × 8 shade levels × 16 columns = 512 tiny
-  bitmaps), drawn at exactly the ray's width. No texel loop, no clip for a
+  bitmaps), drawn at exactly the ray's width. Step and beam faces of 4, 8 or
+  12 texels use exact-height columns (768 more) so they need no clip; faces
+  under 6 px tall are one flat fill in the texture's average colour. No texel loop, no clip for a
   full-height face, and the GPU scales 32 pixels rather than a whole texture
   that is then clipped away. (The first version drew the full 64-column
   texture clipped to the ray; the GPU work for that showed up as a mystery
@@ -59,15 +61,23 @@ So the renderer is built around *number of calls*, not pixels:
 - **The HUD is composed into a bitmap when a value changes** and blitted every
   frame — the display is double-buffered, so skipping the HUD on some frames
   makes it blink.
-- **Pain and muzzle flash are one translucent fill** (alpha blending) instead
-  of three palette variants of every bitmap.
+- **Pain is a translucent red border.** Alpha fills are software-blended on
+  this watch (~20 ms full-screen), so the border is a ninth of the pixels;
+  the muzzle flash is carried by the weapon's own flash frame.
 - **Start-up is ~140 small tasks**, a few per timer tick, so nothing trips the
   watchdog; the loading bar covers it.
 - **Game logic runs in the timer callback, rendering in `onUpdate`** — two
   callbacks, two watchdog budgets.
 
-Measured on the watch: 20 fps standing still (timer-capped), ~15–18 while
-moving, from 1–2 fps for the straight port.
+Measured on the watch over the last profiling session: **20 fps standing
+still** (timer-capped) and **15.6 fps average while moving**, from 1–2 fps for
+the straight port. Two kinds of moving frame still dip to 10–12 fps and are
+left as they are: views with 60+ wall boundaries (stairs seen edge-on with
+beams behind them — ~200 draw calls at ~0.2 ms each), and frames where the
+GPU stalls the CPU on the next call after a very tall near-wall column. The
+next levers would be adaptive ray width in busy views (a fidelity trade) or
+sub-range column bitmaps for near walls (more bitmap objects; the app heap is
+at 358 KB of 768).
 
 ## Battery
 

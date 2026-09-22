@@ -102,7 +102,7 @@ const ACT_NONE = 0; const ACT_FWD = 1; const ACT_BACK = 2; const ACT_LEFT = 3;
 const ACT_RIGHT = 4; const ACT_SLEFT = 5; const ACT_SRIGHT = 6; const ACT_USE = 7;
 const ACT_FIRE = 8;
 const BURST    = 10;                  /* frames of movement per tap       */
-const PROFILE  = true;                /* print per-frame cost to the console */
+const PROFILE  = false;               /* print per-frame cost to the console */
 const BENCH    = false;               /* micro-benchmark the dc on first frames */
 
 /* colour bytes used in the hot path: C(ramp, s) == (ramp << 5) | s */
