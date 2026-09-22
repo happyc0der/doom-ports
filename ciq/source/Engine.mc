@@ -764,8 +764,8 @@ class Engine {
             if (tex == 1 || tex == 2) {
                 for (var k = 1; k <= 3; k++) {
                     var hh = k * 4;
-                    var sb = Graphics.createBufferedBitmap({ :width => 1, :height => hh, :palette => plist }).get();
-                    var sd = sb.getDc();
+                    var sbmp = Graphics.createBufferedBitmap({ :width => 1, :height => hh, :palette => plist }).get();
+                    var sd = sbmp.getDc();
                     var ya = 0;
                     while (ya < hh) {
                         var c2 = wallTex[cb + ya];
@@ -775,7 +775,7 @@ class Engine {
                         sd.fillRectangle(0, ya, 1, yb - ya);
                         ya = yb;
                     }
-                    stepBmp[((((tex - 1) << 3) + lv) * 3 + (k - 1)) * TEXCOLS + col] = sb;
+                    stepBmp[((((tex - 1) << 3) + lv) * 3 + (k - 1)) * TEXCOLS + col] = sbmp;
                 }
             }
         }

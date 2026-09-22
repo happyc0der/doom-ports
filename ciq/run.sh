@@ -4,7 +4,8 @@
 # restart it.  Usage: ./run.sh [seconds-to-wait]
 cd "$(dirname "$0")"
 WAIT="${1:-25}"
-./build.sh 2>&1 | grep -E 'ERROR|error:|BUILD' || exit 1
+./build.sh 2>&1 | grep -E 'ERROR|error:|BUILD' | grep -v WARNING
+if ! grep -q . bin/DoomCE-venux1.prg 2>/dev/null || [ "$(find bin/DoomCE-venux1.prg -newer source/Engine.mc)" = "" ]; then echo 'BUILD FAILED (binary not updated)'; exit 1; fi
 pkill -f MonkeyDoDeux; pkill -f "ConnectIQ.app/Contents/MacOS/simulator"; sleep 1
 # Use the SDK Manager's copy of the simulator: the Homebrew cask moves the app
 # to /Applications, where it can't find the SDK's version.txt and complains.
