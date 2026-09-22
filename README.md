@@ -12,6 +12,25 @@ bar — in ~24 KB, on a 48 MHz eZ80.
 > this repository — there are no assets from any commercial game, and none are
 > required to build or play it.
 
+## Screenshots
+
+Everything below is drawn by the engine. Every wall texture, sprite and
+animation frame is generated procedurally at startup by code in `src/main.c` —
+there are no image assets in this repository.
+
+| | |
+|---|---|
+| ![Corridor](docs/corridor.png) | ![Close encounter](docs/enemy.png) |
+| Textured walls, distance shading, an enemy at range | A soldier up close, with the weapon and status bar |
+| ![Raised platform](docs/platform.png) | ![Doorway](docs/door.png) |
+| Variable floor heights — enemies stand at different elevations | Sliding door in a corridor |
+
+The sprite atlas, generated at startup: five rotations with a two-frame walk
+cycle, a firing frame per rotation, a five-frame death sequence, and three
+weapon frames.
+
+![Sprite atlas](docs/sprites.png)
+
 ---
 
 ## Requirements

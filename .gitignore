@@ -28,5 +28,6 @@ probe/
 # Artefacts
 *.ppm
 *.png
+!docs/*.png
 *.bak
 .DS_Store
