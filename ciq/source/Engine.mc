@@ -135,6 +135,7 @@ class Engine {
     var shadeRGB; var shadeERGB;      /* [3][8] of Array[256] rgb          */
     var wallTex;                      /* ByteArray [tex][x][y]             */
     var texBmp;                       /* [NWALLTEX*8*TEXCOLS] 1x32 bitmaps: (tex, shade, column) */
+    var texAvg;                       /* [NWALLTEX*8] average colour, for faces too small to texture */
     var sprDefs;                      /* [[gfx, base, w, h, mirror], ...]  */
     var sprBmp; var sprIdx; var sprPal; var sprKey;   /* per sprite bitmap */
     var sprOx; var sprOy; var sprBw; var sprBh;         /* opaque bbox inside the frame */
@@ -301,6 +302,7 @@ class Engine {
         burst = new [9];
         cellKey = new [MAPW * MAPH]b;
         texBmp  = new [NWALLTEX * 8 * TEXCOLS];
+        texAvg  = new [NWALLTEX * 8];
         /* sprite bitmaps: 20 soldier frames, mirrors for rotations 1..3,
          * 2 pickups, 2 projectiles */
         sprDefs = [];
@@ -330,7 +332,7 @@ class Engine {
         sprOx = new [ns]; sprOy = new [ns]; sprBw = new [ns]; sprBh = new [ns];
         wpnBox = new [NWPN];
         if (Graphics has :createColor) {
-            tintPain  = Graphics.createColor(110, 255, 40, 20);
+            tintPain  = Graphics.createColor(150, 255, 40, 20);
             tintFlash = Graphics.createColor(70, 255, 240, 200);
         }
         for (var i = 0; i < 9; i++) { burst[i] = 0; }
@@ -725,6 +727,13 @@ class Engine {
         var lut = shadeRGB[lv];
         var base = tex * TEXW * TEXH;
         var out = task * TEXCOLS;
+        var sr = 0; var sg = 0; var sb = 0;
+        for (var i = 0; i < TEXW * TEXH; i += 7) {
+            var rgbv = lut[wallTex[base + i]];
+            sr += (rgbv >> 16) & 255; sg += (rgbv >> 8) & 255; sb += rgbv & 255;
+        }
+        var cnt = (TEXW * TEXH + 6) / 7;
+        texAvg[task] = ((sr / cnt) << 16) | ((sg / cnt) << 8) | (sb / cnt);
         for (var col = 0; col < TEXCOLS; col++) {
             var cb = base + (col * (TEXW / TEXCOLS)) * TEXH;
             var seen = new [256]b;
@@ -1144,7 +1153,15 @@ class Engine {
 
                 if (tid != 0) {                                   /* solid block */
                     var P = ypf - ypc;
-                    if (P > 0 && ytop < ybot) {
+                    if (P > 0 && P < 6 && ytop < ybot) {
+                        /* too small to show texture: one flat fill, no clip */
+                        var y0s = ypc > ytop ? ypc : ytop; var y1s = ypf < ybot ? ypf : ybot;
+                        if (y1s > y0s) {
+                            var ac = texAvg[((tid - 1) << 3) + lv];
+                            if (ac != lc) { dc.setColor(ac, TR); lc = ac; }
+                            dc.fillRectangle(x, y0s, xw, y1s - y0s); calls++;
+                        }
+                    } else if (P > 0 && ytop < ybot) {
                         var texels = (pc - pf) >> 3;
                         /* a full-height face exactly fills its window: no clip needed.
                          * partial faces are drawn taller than the window (texture is
@@ -1165,7 +1182,11 @@ class Engine {
                     if (yf < ybot) {
                         var t3 = yf > ytop ? yf : ytop;
                         var P2 = ypf - yf;
-                        if (P2 > 0 && t3 < ybot) {
+                        if (P2 > 0 && P2 < 6 && t3 < ybot) {
+                            var ac2 = texAvg[8 + lv];
+                            if (ac2 != lc) { dc.setColor(ac2, TR); lc = ac2; }
+                            dc.fillRectangle(x, t3, xw, ybot - t3); calls++;
+                        } else if (P2 > 0 && t3 < ybot) {
                             var tx2 = (f - pf) >> 3; if (tx2 < 1) { tx2 = 1; }
                             dc.setClip(x, t3, xw, ybot - t3); calls++;
                             dc.drawScaledBitmap(x, yf, xw, (P2 * TEXH) / tx2, tb[(8 + lv) * TEXCOLS + tcol]); calls++;
@@ -1179,7 +1200,11 @@ class Engine {
                     if (yc > ytop) {
                         var t4 = yc < ybot ? yc : ybot;
                         var P3 = yc - ypc;
-                        if (P3 > 0 && ytop < t4) {
+                        if (P3 > 0 && P3 < 6 && ytop < t4) {
+                            var ac3 = texAvg[16 + lv];
+                            if (ac3 != lc) { dc.setColor(ac3, TR); lc = ac3; }
+                            dc.fillRectangle(x, ytop, xw, t4 - ytop); calls++;
+                        } else if (P3 > 0 && ytop < t4) {
                             var tx3 = (pc - c) >> 3; if (tx3 < 1) { tx3 = 1; }
                             dc.setClip(x, ytop, xw, t4 - ytop); calls++;
                             dc.drawScaledBitmap(x, ypc, xw, (P3 * TEXH) / tx3, tb[(16 + lv) * TEXCOLS + tcol]); calls++;
@@ -1693,6 +1718,7 @@ class Engine {
             var dx = px - aX[i]; var dy = py - aY[i];
             var adx = dx < 0 ? -dx : dx; var ady = dy < 0 ? -dy : dy;
             var adist = (adx > ady) ? adx + (ady >> 1) : ady + (adx >> 1);
+            if (st == A_IDLE && adist >= 12 * ONE) { continue; }   /* cannot see us: nothing to do */
             var see;
             if (((tickN + i) & 3) == 0) {                    /* sight check is the AI's big cost */
                 see = deadTic == 0 && adist < 12 * ONE && los(aX[i], aY[i], px, py);
@@ -1930,10 +1956,16 @@ class Engine {
             renderCrosshair(dc);
             renderWeapon(dc);
         }
-        /* pain / muzzle flash: one translucent fill over the view */
-        if (curPal != 0 && tintPain != null) {
-            dc.setColor(curPal == 1 ? tintPain : tintFlash, Graphics.COLOR_TRANSPARENT);
-            dc.fillRectangle(0, 0, SCR_W, VIEW_H);
+        /* pain: a translucent red border.  Alpha fills are blended in
+         * software on this watch, so a full-screen tint cost ~20 ms;
+         * a 24 px frame is a ninth of the pixels.  The muzzle flash is
+         * carried by the weapon's own flash frame. */
+        if (curPal == 1 && tintPain != null) {
+            dc.setColor(tintPain, Graphics.COLOR_TRANSPARENT);
+            dc.fillRectangle(0, 0, SCR_W, 24);
+            dc.fillRectangle(0, VIEW_H - 24, SCR_W, 24);
+            dc.fillRectangle(0, 24, 24, VIEW_H - 48);
+            dc.fillRectangle(SCR_W - 24, 24, 24, VIEW_H - 48);
             mLastCol = -1;
         }
         var t3 = System.getTimer();
