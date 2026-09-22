@@ -114,7 +114,14 @@ class Engine {
     var colAngT; var colCosT;         /* [2] of per-ray tables, index = mode */
     var nrayT = [28, 19];
     var xstep = XSTEP_STILL; var nray = 28; var colAng; var colCos;
-    var hudBmp = null; var rRgt;
+    var hudBmp = null; var rRgt;      /* static HUD strip                  */
+    var hudFull = null; var hudFullDc = null;          /* whole HUD, redrawn on change */
+    var hudH = -1; var hudA = -1; var hudK = -1; var hudF = -1;
+    var wallBuf = null; var wallDc = null;             /* offscreen wall pass          */
+    var cPx = -1; var cPy = -1; var cPa = -1; var cEye = -1; var cVcy = -1; var cXs = -1;
+    var doorAnim = false;             /* a door moved this tick: walls must re-render */
+    var wallsCached = 0;              /* profiling: frames that reused the wall buffer */
+    var profN = 0;
     var atanTab;                      /* [65]                              */
     var shade;   var shadeE;          /* [8] of ByteArray[256]             */
     var pal;                          /* [3] of Array[256] rgb             */
@@ -350,6 +357,7 @@ class Engine {
         for (var i = 0; i < sprDefs.size(); i++) { t.add([:initSpriteBitmap, i]); }
         for (var f = 0; f < NWPN; f++) { t.add([:initWeaponBitmap, f]); }
         t.add([:initHudBitmap, 0]);
+        t.add([:initBuffers, 0]);
         t.add([:initWorld, 0]);
         tasks = t; taskN = t.size();
     }
@@ -1379,12 +1387,41 @@ class Engine {
         hudBmp = bmp;
     }
 
+    /* Offscreen targets.  The wall pass renders into wallBuf only when the
+     * view changes; every frame blits it (one hardware call) and draws the
+     * sprites on top.  The HUD is composed into hudFull when a value
+     * changes.  Both live in the graphics pool, outside app memory; if the
+     * device refuses them we fall back to drawing straight to the screen. */
+    function initBuffers(unused) {
+        try {
+            wallBuf = Graphics.createBufferedBitmap({ :width => SCR_W, :height => VIEW_H }).get();
+            wallDc  = wallBuf.getDc();
+        } catch (e) {
+            wallBuf = null; wallDc = null;
+        }
+        try {
+            hudFull   = Graphics.createBufferedBitmap({ :width => SCR_W, :height => SCR_H - VIEW_H }).get();
+            hudFullDc = hudFull.getDc();
+        } catch (e) {
+            hudFull = null; hudFullDc = null;
+        }
+    }
+
     /* drawn every frame (the display is double-buffered, so skipping a
      * frame leaves a stale strip in the other buffer): one bitmap, two
      * bar fills, four texts */
     function renderHud(dc) {
+        if (hudFull == null) { drawHud(dc, VIEW_H); return; }
+        if (health != hudH || ammo != hudA || kills != hudK || curFps != hudF) {
+            hudH = health; hudA = ammo; hudK = kills; hudF = curFps;
+            drawHud(hudFullDc, 0);
+        }
+        dc.drawBitmap(0, VIEW_H, hudFull);
+        mCalls++;
+    }
+
+    function drawHud(dc, hy) {
         var p = pal[0];
-        var hy = VIEW_H;
         var font = Graphics.FONT_SMALL;
         var ty = hy + 6; var by = hy + 46;
         dc.drawBitmap(0, hy, hudBmp);
@@ -1456,7 +1493,9 @@ class Engine {
     }
 
     function updateDoors() {
+        doorAnim = false;
         for (var i = 0; i < ndoor; i++) {
+            var was = doorOpen[i];
             if (doorHold[i] > 0) {
                 doorHold[i]--;
                 if (doorHold[i] == 0) { doorWant[i] = 0; }
@@ -1469,6 +1508,7 @@ class Engine {
                 else if (doorOpen[i] >= 4) { doorOpen[i] -= 4; }
                 else { doorOpen[i] = 0; }
             }
+            if (doorOpen[i] != was) { doorAnim = true; }
         }
     }
 
@@ -1703,7 +1743,7 @@ class Engine {
 
         var moving = false; var turning = false;
 
-        if (wantRestart) { initWorld(0); }
+        if (wantRestart) { initWorld(0); cPx = -1; }
         if (deadTic != 0) {
             if (deadTic < 40) { deadTic++; }
             if (viewCy > 80) { viewCy -= 6; }        /* camera drops to the floor */
@@ -1812,7 +1852,19 @@ class Engine {
 
         mCalls = 0; mLastCol = -1; mIters = 0; frameN++;
         var t0 = System.getTimer();
-        renderWalls(dc);
+        if (wallBuf == null) {
+            renderWalls(dc);
+        } else {
+            /* re-cast only when something the walls depend on changed */
+            if (px != cPx || py != cPy || pa != cPa || eyeZ != cEye || viewCy != cVcy || xstep != cXs || doorAnim) {
+                renderWalls(wallDc);
+                cPx = px; cPy = py; cPa = pa; cEye = eyeZ; cVcy = viewCy; cXs = xstep;
+            } else {
+                wallsCached++;
+            }
+            dc.drawBitmap(0, 0, wallBuf);
+            mCalls++;
+        }
         var t1 = System.getTimer();
         var wallIters = mIters;
         renderThings(dc);
@@ -1838,10 +1890,12 @@ class Engine {
             fpsAcc += t - lastT; fpsN++;
             if (fpsN >= 8) {
                 curFps = fpsAcc > 0 ? (8000 / fpsAcc) : 0;
+                var cached = wallsCached; wallsCached = 0;
                 fpsAcc = 0; fpsN = 0;
-                if (PROFILE) {
+                profN++;
+                if (PROFILE && (profN & 3) == 0) {          /* every 32 frames: log writes cost */
                     System.println("fps=" + curFps + " calls=" + frameCalls + " wallIters=" + wallIters + " spriteIters=" + (mIters - wallIters)
-                                   + " ms/8f walls=" + tWalls + " things=" + tThings + " weapon=" + tWeapon + " hud=" + tHud + " tick=" + tTick);
+                                   + " cached=" + cached + " ms/8f walls=" + tWalls + " things=" + tThings + " weapon=" + tWeapon + " hud=" + tHud + " tick=" + tTick);
                 }
                 tWalls = 0; tThings = 0; tWeapon = 0; tHud = 0; tTick = 0;
             }
