@@ -40,9 +40,9 @@ const NA_MASK  = 2047;
 const NA_90    = 512;
 
 const PROJD    = 388;                 /* (SCR_W/2) / tan(30 deg)          */
-const XSTEP    = 16;                  /* pixels per ray                   */
-const XSHIFT   = 4;                   /* log2(XSTEP)                      */
-const NRAY     = 28;                  /* SCR_W / XSTEP                    */
+const XSTEP_STILL = 16;               /* pixels per ray when standing still (28 rays) */
+const XSTEP_MOVE  = 24;               /* pixels per ray while moving/turning (19 rays) */
+const NRAY_MAX    = 28;
 const DIST_MIN = 24;
 const DIST_MAX = 16383;
 const GUARD    = 64;                  /* max DDA steps per ray            */
@@ -99,7 +99,7 @@ const ACT_RIGHT = 4; const ACT_SLEFT = 5; const ACT_SRIGHT = 6; const ACT_USE = 
 const ACT_FIRE = 8;
 const BURST    = 10;                  /* frames of movement per tap       */
 const PROFILE  = true;                /* print per-frame cost to the console */
-const BENCH    = true;                /* micro-benchmark the dc on first frames */
+const BENCH    = false;               /* micro-benchmark the dc on first frames */
 
 /* colour bytes used in the hot path: C(ramp, s) == (ramp << 5) | s */
 const COL_FLOOR = 85;                 /* C(2, 21) */
@@ -111,7 +111,10 @@ const COL_XHAIR = 222;                /* C(6, 30) */
 class Engine {
     /* ---------- tables ---------- */
     var cosTab;  var icosTab;         /* [NA]                              */
-    var colAng;  var colCos;          /* [NRAY]                            */
+    var colAngT; var colCosT;         /* [2] of per-ray tables, index = mode */
+    var nrayT = [28, 19];
+    var xstep = XSTEP_STILL; var nray = 28; var colAng; var colCos;
+    var hudBmp = null; var rRgt;
     var atanTab;                      /* [65]                              */
     var shade;   var shadeE;          /* [8] of ByteArray[256]             */
     var pal;                          /* [3] of Array[256] rgb             */
@@ -190,7 +193,7 @@ class Engine {
     var logo = null;                  /* title logo, loaded on first draw   */
     var benchStep = 0; var benchBmp = null;
     var tWalls = 0; var tThings = 0; var tWeapon = 0; var tHud = 0;
-    var hudH = -1; var hudA = -1; var hudK = -1; var hudF = -1; var frameN = 0;
+    var frameN = 0;
 
     /* 8 colour ramps x 32 brightness steps = 256 palette entries. */
     var rampRGB = [ [200,200,200], [195,85,65], [150,105,55], [116,124,92],
@@ -256,10 +259,11 @@ class Engine {
     function initialize() {
         cosTab  = new [NA];
         icosTab = new [NA];
-        colAng  = new [NRAY];
-        colCos  = new [NRAY];
+        colAngT = [ new [NRAY_MAX], new [NRAY_MAX] ];
+        colCosT = [ new [NRAY_MAX], new [NRAY_MAX] ];
+        colAng = colAngT[0]; colCos = colCosT[0];
         atanTab = new [65];
-        zbuf    = new [NRAY];
+        zbuf    = new [NRAY_MAX];
         wallTex = new [NWALLTEX * TEXW * TEXH]b;
         eGfx    = new [NFRAME * SPR_SZ]b;
         pkGfx   = new [2 * PK_W * PK_H]b;
@@ -279,7 +283,7 @@ class Engine {
         jX = new [MAXPROJ]; jY = new [MAXPROJ]; jVx = new [MAXPROJ]; jVy = new [MAXPROJ]; jZ = new [MAXPROJ];
         jOn = new [MAXPROJ]; jLife = new [MAXPROJ]; jFrame = new [MAXPROJ]; jDist = new [MAXPROJ];
         var nr = MAXACT + MAXPICK + MAXPROJ;
-        rDist = new [nr]; rKind = new [nr]; rIdx = new [nr];
+        rDist = new [nr]; rKind = new [nr]; rIdx = new [nr]; rRgt = new [nr];
         burst = new [9];
         cellKey = new [MAPW * MAPH]b;
         texBmp  = new [NWALLTEX * 8];
@@ -345,6 +349,7 @@ class Engine {
         for (var i = 0; i < NWALLTEX * 8; i++) { t.add([:initTexBitmap, i]); }
         for (var i = 0; i < sprDefs.size(); i++) { t.add([:initSpriteBitmap, i]); }
         for (var f = 0; f < NWPN; f++) { t.add([:initWeaponBitmap, f]); }
+        t.add([:initHudBitmap, 0]);
         t.add([:initWorld, 0]);
         tasks = t; taskN = t.size();
     }
@@ -420,12 +425,17 @@ class Engine {
     function initTables2(unused) {
         var k = 2.0 * Math.PI / NA;
         projScale = projd * ONE;
-        for (var r = 0; r < NRAY; r++) {
-            var x = r << XSHIFT;
-            var t = Math.atan((x - SCR_W / 2 + 0.5) / projd.toFloat());
-            var u = t / k;
-            colAng[r] = (u + (u < 0 ? -0.5 : 0.5)).toNumber();
-            colCos[r] = (Math.cos(t) * 256.0 + 0.5).toNumber();
+        for (var m = 0; m < 2; m++) {
+            var st = (m == 0) ? XSTEP_STILL : XSTEP_MOVE;
+            var ca = colAngT[m]; var cc = colCosT[m];
+            for (var r = 0; r < nrayT[m]; r++) {
+                var x = r * st;
+                var w = (x + st > SCR_W) ? SCR_W - x : st;
+                var t = Math.atan((x + w / 2.0 - SCR_W / 2) / projd.toFloat());
+                var u = t / k;
+                ca[r] = (u + (u < 0 ? -0.5 : 0.5)).toNumber();
+                cc[r] = (Math.cos(t) * 256.0 + 0.5).toNumber();
+            }
         }
         for (var i = 0; i <= 64; i++) {
             atanTab[i] = (Math.atan(i / 64.0) / k + 0.5).toNumber();
@@ -989,6 +999,7 @@ class Engine {
 
     function renderWalls(dc) {
         var cosT = cosTab; var icosT = icosTab; var cAng = colAng; var cCos = colCos;
+        var xs = xstep; var nr = nray;
         var key = cellKey; var wld = world; var hm = hmap; var dOpen = doorOpen;
         var zb = zbuf; var tb = texBmp; var sRGB = shadeRGB;
         var pxx = px; var pyy = py; var paa = pa; var eye = eyeZ; var vcy = viewCy;
@@ -1004,8 +1015,9 @@ class Engine {
         var TR = Graphics.COLOR_TRANSPARENT;
         var calls = 0;
 
-        for (var r = 0; r < NRAY; r++) {
-            var x = r << XSHIFT;
+        for (var r = 0; r < nr; r++) {
+            var x = r * xs;
+            var xw = (x + xs > SCR_W) ? SCR_W - x : xs;
             var ang = paa + cAng[r];
             if (ang < 0) { ang += NA; } else if (ang >= NA) { ang -= NA; }
             var sa = ang - NA_90;
@@ -1020,7 +1032,7 @@ class Engine {
             zb[r] = DIST_MAX;
             /* one clip per ray: every draw below stays in this column, and
              * the texture draw relies on it to pick out its column */
-            dc.setClip(x, 0, XSTEP, VIEW_H); calls++;
+            dc.setClip(x, 0, xw, VIEW_H); calls++;
 
             if (cs < 0) { stepX = -1;    sdx = (fracX * ddx) >> FIX; }
             else        { stepX =  1;    sdx = ((ONE - fracX) * ddx) >> FIX; }
@@ -1067,7 +1079,7 @@ class Engine {
                     if (ybot > t) {
                         var col = lut[COL_FLOOR];
                         if (col != lc) { dc.setColor(col, TR); lc = col; }
-                        dc.fillRectangle(x, t, XSTEP, ybot - t); calls++;
+                        dc.fillRectangle(x, t, xw, ybot - t); calls++;
                     }
                     ybot = t;
                 }
@@ -1076,7 +1088,7 @@ class Engine {
                     if (t2 > ytop) {
                         var col2 = lut[COL_CEIL];
                         if (col2 != lc) { dc.setColor(col2, TR); lc = col2; }
-                        dc.fillRectangle(x, ytop, XSTEP, t2 - ytop); calls++;
+                        dc.fillRectangle(x, ytop, xw, t2 - ytop); calls++;
                     }
                     ytop = t2;
                 }
@@ -1102,8 +1114,8 @@ class Engine {
                          * scaled to a whole cell) and must be clipped. */
                         var clip = texels < 32 || (ytop > ypc && ytop > 0) || (ybot < ypf && ybot < VIEW_H);
                         if (texels < 1) { texels = 1; }
-                        if (clip) { dc.setClip(x, ytop, XSTEP, ybot - ytop); calls++; }
-                        dc.drawScaledBitmap(x - tcol * XSTEP, ypc, TEXW * XSTEP, (P * TEXH) / texels, tb[((tid - 1) << 3) + lv]); calls++;
+                        if (clip) { dc.setClip(x, ytop, xw, ybot - ytop); calls++; }
+                        dc.drawScaledBitmap(x - tcol * xs, ypc, TEXW * xs, (P * TEXH) / texels, tb[((tid - 1) << 3) + lv]); calls++;
                     }
                     zb[r] = pdist;
                     ytop = ybot;
@@ -1117,9 +1129,9 @@ class Engine {
                         var P2 = ypf - yf;
                         if (P2 > 0 && t3 < ybot) {
                             var tx2 = (f - pf) >> 3; if (tx2 < 1) { tx2 = 1; }
-                            dc.setClip(x, t3, XSTEP, ybot - t3); calls++;
-                            dc.drawScaledBitmap(x - tcol * XSTEP, yf, TEXW * XSTEP, (P2 * TEXH) / tx2, tb[8 + lv]); calls++;
-                            dc.setClip(x, 0, XSTEP, VIEW_H); calls++;
+                            dc.setClip(x, t3, xw, ybot - t3); calls++;
+                            dc.drawScaledBitmap(x - tcol * xs, yf, TEXW * xs, (P2 * TEXH) / tx2, tb[8 + lv]); calls++;
+                            dc.setClip(x, 0, xw, VIEW_H); calls++;
                         }
                         ybot = t3;
                     }
@@ -1131,9 +1143,9 @@ class Engine {
                         var P3 = yc - ypc;
                         if (P3 > 0 && ytop < t4) {
                             var tx3 = (pc - c) >> 3; if (tx3 < 1) { tx3 = 1; }
-                            dc.setClip(x, ytop, XSTEP, t4 - ytop); calls++;
-                            dc.drawScaledBitmap(x - tcol * XSTEP, ypc, TEXW * XSTEP, (P3 * TEXH) / tx3, tb[16 + lv]); calls++;
-                            dc.setClip(x, 0, XSTEP, VIEW_H); calls++;
+                            dc.setClip(x, ytop, xw, t4 - ytop); calls++;
+                            dc.drawScaledBitmap(x - tcol * xs, ypc, TEXW * xs, (P3 * TEXH) / tx3, tb[16 + lv]); calls++;
+                            dc.setClip(x, 0, xw, VIEW_H); calls++;
                         }
                         ytop = t4;
                     }
@@ -1146,8 +1158,8 @@ class Engine {
                 var mid = vcy;
                 if (mid < ytop) { mid = ytop; }
                 if (mid > ybot) { mid = ybot; }
-                if (mid > ytop) { if (bgC != lc) { dc.setColor(bgC, TR); lc = bgC; } dc.fillRectangle(x, ytop, XSTEP, mid - ytop); calls++; }
-                if (ybot > mid) { if (bgF != lc) { dc.setColor(bgF, TR); lc = bgF; } dc.fillRectangle(x, mid, XSTEP, ybot - mid); calls++; }
+                if (mid > ytop) { if (bgC != lc) { dc.setColor(bgC, TR); lc = bgC; } dc.fillRectangle(x, ytop, xw, mid - ytop); calls++; }
+                if (ybot > mid) { if (bgF != lc) { dc.setColor(bgF, TR); lc = bgF; } dc.fillRectangle(x, mid, xw, ybot - mid); calls++; }
             }
         }
         dc.clearClip();
@@ -1197,17 +1209,18 @@ class Engine {
         var bh = (sprBh[k] * h) / ghei + 1;
 
         /* draw once per run of rays not hidden by a nearer wall */
-        var zb = zbuf;
-        var r0 = x0 < 0 ? 0 : x0 / XSTEP;
-        var r1 = (x1 - 1) / XSTEP;
-        if (r1 >= NRAY) { r1 = NRAY - 1; }
+        var zb = zbuf; var xs = xstep;
+        var r0 = x0 < 0 ? 0 : x0 / xs;
+        var r1 = (x1 - 1) / xs;
+        if (r1 >= nray) { r1 = nray - 1; }
         var start = -1;
         for (var r = r0; r <= r1; r++) {
             var vis = fwd < zb[r];
             if (vis && start < 0) { start = r; }
             if (start >= 0 && (!vis || r == r1)) {
-                var rx0 = start * XSTEP;
-                var rx1 = (vis ? r + 1 : r) * XSTEP;
+                var rx0 = start * xs;
+                var rx1 = (vis ? r + 1 : r) * xs;
+                if (rx1 > SCR_W) { rx1 = SCR_W; }
                 dc.setClip(rx0, ys, rx1 - rx0, ye - ys);
                 dc.drawScaledBitmap(bx, by, bw, bh, bmp);
                 mCalls += 2;
@@ -1217,75 +1230,78 @@ class Engine {
         dc.clearClip();
     }
 
-    /* gather actors, pickups and projectiles, sort far to near, draw */
+    /* gather actors, pickups and projectiles that are inside the view
+     * cone, sort far to near, draw.  The cone test comes first: it is
+     * cheap, and everything after it is not. */
     function renderThings(dc) {
         var n = 0;
         var cs = cosTab[pa]; var sn = cosTab[(pa - NA_90) & NA_MASK];
         var pxx = px; var pyy = py;
-        var rd = rDist; var rk = rKind; var ri = rIdx;
+        var rd = rDist; var rk = rKind; var ri = rIdx; var rr = rRgt;
+        var hm = hmap;
 
         for (var i = 0; i < nact; i++) {
             if (aSt[i] == A_GONE) { continue; }
-            var fwd = ((aX[i] - pxx) * cs + (aY[i] - pyy) * sn) >> FIX;
+            var dx = aX[i] - pxx; var dy = aY[i] - pyy;
+            var fwd = (dx * cs + dy * sn) >> FIX;
             if (fwd < 96) { continue; }
+            var rgt = (-dx * sn + dy * cs) >> FIX;
+            if (rgt > fwd || -rgt > fwd) { continue; }          /* outside a 90 degree cone */
             aDist[i] = fwd;
-            rd[n] = fwd; rk[n] = K_ACT; ri[n] = i; n++;
+            rd[n] = fwd; rk[n] = K_ACT; ri[n] = i; rr[n] = rgt; n++;
         }
         for (var i = 0; i < npick; i++) {
             if (pOn[i] == 0) { continue; }
-            var fwd = ((pX[i] - pxx) * cs + (pY[i] - pyy) * sn) >> FIX;
+            var dx = pX[i] - pxx; var dy = pY[i] - pyy;
+            var fwd = (dx * cs + dy * sn) >> FIX;
             if (fwd < 96) { continue; }
-            pDist[i] = fwd;
-            rd[n] = fwd; rk[n] = K_PICK; ri[n] = i; n++;
+            var rgt = (-dx * sn + dy * cs) >> FIX;
+            if (rgt > fwd || -rgt > fwd) { continue; }
+            rd[n] = fwd; rk[n] = K_PICK; ri[n] = i; rr[n] = rgt; n++;
         }
         for (var i = 0; i < MAXPROJ; i++) {
             if (jOn[i] == 0) { continue; }
-            var fwd = ((jX[i] - pxx) * cs + (jY[i] - pyy) * sn) >> FIX;
+            var dx = jX[i] - pxx; var dy = jY[i] - pyy;
+            var fwd = (dx * cs + dy * sn) >> FIX;
             if (fwd < 64) { continue; }
-            jDist[i] = fwd;
-            rd[n] = fwd; rk[n] = K_PROJ; ri[n] = i; n++;
+            var rgt = (-dx * sn + dy * cs) >> FIX;
+            if (rgt > fwd || -rgt > fwd) { continue; }
+            rd[n] = fwd; rk[n] = K_PROJ; ri[n] = i; rr[n] = rgt; n++;
         }
 
         for (var i = 1; i < n; i++) {                              /* far to near */
-            var vd = rd[i]; var vk = rk[i]; var vi = ri[i];
+            var vd = rd[i]; var vk = rk[i]; var vi = ri[i]; var vr = rr[i];
             var j = i - 1;
-            while (j >= 0 && rd[j] < vd) { rd[j + 1] = rd[j]; rk[j + 1] = rk[j]; ri[j + 1] = ri[j]; j--; }
-            rd[j + 1] = vd; rk[j + 1] = vk; ri[j + 1] = vi;
+            while (j >= 0 && rd[j] < vd) { rd[j + 1] = rd[j]; rk[j + 1] = rk[j]; ri[j + 1] = ri[j]; rr[j + 1] = rr[j]; j--; }
+            rd[j + 1] = vd; rk[j + 1] = vk; ri[j + 1] = vi; rr[j + 1] = vr;
         }
 
         for (var q = 0; q < n; q++) {
-            var fwd = rd[q]; var i = ri[q]; var kind = rk[q];
-            var dx; var dy; var rgt; var lv;
+            var fwd = rd[q]; var i = ri[q]; var kind = rk[q]; var rgt = rr[q];
+            var lv;
             if (kind == K_ACT) {
                 var frame; var mirror = 0;
-                dx = aX[i] - pxx; dy = aY[i] - pyy;
-                rgt = (-dx * sn + dy * cs) >> FIX;
                 lv = fwd >> 10; if (lv > 7) { lv = 7; }
                 var st = aSt[i];
                 if (st == A_FIRE) { lv = 0; }
                 if (st == A_DIE || st == A_DEAD) {
                     frame = F_DIE + aFrame[i];
                 } else {
-                    var ang = pointAngle(dx, dy);
+                    var ang = pointAngle(aX[i] - pxx, aY[i] - pyy);
                     var d   = (ang - aDir[i] + NA / 2) & NA_MASK;
                     var r8  = ((d + NA / 16) & NA_MASK) >> 8;
                     var rot = rotMap[r8];
                     mirror  = rotMirr[r8];
                     frame = (st == A_FIRE) ? F_FIRE + rot : F_WALK + rot * 2 + (aFrame[i] & 1);
                 }
-                drawBillboard(dc, fwd, rgt, floorz(aX[i] >> FIX, aY[i] >> FIX), ONE,
+                drawBillboard(dc, fwd, rgt, (hm[(aY[i] >> FIX) * MAPW + (aX[i] >> FIX)] & 0xF0) << 1, ONE,
                               sprMap[frame * 2 + mirror], SPR_W, SPR_H, lv, aType[i] != 0 ? 1 : 0);
             } else if (kind == K_PICK) {
-                dx = pX[i] - pxx; dy = pY[i] - pyy;
-                rgt = (-dx * sn + dy * cs) >> FIX;
                 lv = fwd >> 10; if (lv > 7) { lv = 7; }
-                drawBillboard(dc, fwd, rgt, floorz(pX[i] >> FIX, pY[i] >> FIX), ONE * 2 / 5,
+                drawBillboard(dc, fwd, rgt, (hm[(pY[i] >> FIX) * MAPW + (pX[i] >> FIX)] & 0xF0) << 1, ONE * 2 / 5,
                               PK0 + pType[i], PK_W, PK_H, lv, 0);
             } else {
-                dx = jX[i] - pxx; dy = jY[i] - pyy;
-                rgt = (-dx * sn + dy * cs) >> FIX;
-                drawBillboard(dc, fwd, rgt, jZ[i], ONE / 4,
-                              PJ0 + jFrame[i], PJ_W, PJ_H, 0, 0);
+                drawBillboard(dc, fwd, rgt, jZ[i], ONE / 4, PJ0 + jFrame[i], PJ_W, PJ_H, 0, 0);
             }
         }
     }
@@ -1341,42 +1357,53 @@ class Engine {
         if (fill < w) { fillRun(dc, x + fill, y, w - fill, h, bg); }
     }
 
+    /* everything in the HUD that never changes, drawn once into a bitmap */
+    function initHudBitmap(unused) {
+        var p = pal[0];
+        var hh = SCR_H - VIEW_H;
+        var cols = [ p[(2 << 5) | 5], p[(2 << 5) | 11], p[(5 << 5) | 28], p[(6 << 5) | 24],
+                     p[(6 << 5) | 28], p[(6 << 5) | 20], p[20], p[(2 << 5) | 8] ];
+        var ref = Graphics.createBufferedBitmap({ :width => SCR_W, :height => hh, :palette => cols });
+        var bmp = ref.get();
+        var d = bmp.getDc();
+        var TR = Graphics.COLOR_TRANSPARENT;
+        var ty = 6; var by = 46;
+        d.setColor(cols[0], TR); d.fillRectangle(0, 0, SCR_W, hh);
+        d.setColor(cols[1], TR); d.fillRectangle(0, 0, SCR_W, 2);
+        d.setColor(cols[2], TR); d.fillRectangle(30, ty + 6, 4, 14); d.fillRectangle(25, ty + 11, 14, 4);   /* cross */
+        d.setColor(cols[3], TR); d.fillRectangle(182, ty + 4, 2, 18);                                       /* round */
+        d.setColor(cols[4], TR); d.fillRectangle(184, ty + 4, 2, 18);
+        d.setColor(cols[5], TR); d.fillRectangle(186, ty + 4, 2, 18);
+        d.setColor(cols[6], TR); d.fillRectangle(330, ty + 12, 10, 4);                                      /* kills */
+        d.setColor(cols[7], TR); d.fillRectangle(24, by, 130, 8); d.fillRectangle(176, by, 130, 8);         /* bar bg */
+        hudBmp = bmp;
+    }
+
+    /* drawn every frame (the display is double-buffered, so skipping a
+     * frame leaves a stale strip in the other buffer): one bitmap, two
+     * bar fills, four texts */
     function renderHud(dc) {
-        if (health == hudH && ammo == hudA && kills == hudK && (frameN & 7) != 0) { return; }
-        hudH = health; hudA = ammo; hudK = kills;
         var p = pal[0];
         var hy = VIEW_H;
-        fillRun(dc, 0, hy, SCR_W, SCR_H - hy, p[(2 << 5) | 5]);
-        fillRun(dc, 0, hy, SCR_W, 2, p[(2 << 5) | 11]);
         var font = Graphics.FONT_SMALL;
-        var ty = hy + 6;                        /* number row */
-        var by = hy + 46;                       /* bar row    */
-
-        /* health: red cross, number, bar */
-        fillRun(dc, 30, ty + 6, 4, 14, p[(5 << 5) | 28]);
-        fillRun(dc, 25, ty + 11, 14, 4, p[(5 << 5) | 28]);
-        dc.setColor(p[(5 << 5) | 30], Graphics.COLOR_TRANSPARENT); mLastCol = -1;
+        var ty = hy + 6; var by = hy + 46;
+        dc.drawBitmap(0, hy, hudBmp);
+        var hf = (130 * (health > 100 ? 100 : health)) / 100;
+        if (hf > 0) { dc.setColor(p[(5 << 5) | 26], Graphics.COLOR_TRANSPARENT); dc.fillRectangle(24, by, hf, 8); }
+        var af = (130 * (ammo > 50 ? 50 : ammo)) / 50;
+        if (af > 0) { dc.setColor(p[(6 << 5) | 24], Graphics.COLOR_TRANSPARENT); dc.fillRectangle(176, by, af, 8); }
+        dc.setColor(p[(5 << 5) | 30], Graphics.COLOR_TRANSPARENT);
         dc.drawText(48, ty, font, health.format("%d"), Graphics.TEXT_JUSTIFY_LEFT);
-        bar(dc, 24, by, 130, 8, health, p[(5 << 5) | 26], p[(2 << 5) | 8]);
-
-        /* ammo: brass round, number, bar */
-        fillRun(dc, 182, ty + 4, 2, 18, p[(6 << 5) | 24]);
-        fillRun(dc, 184, ty + 4, 2, 18, p[(6 << 5) | 28]);
-        fillRun(dc, 186, ty + 4, 2, 18, p[(6 << 5) | 20]);
-        dc.setColor(p[(6 << 5) | 30], Graphics.COLOR_TRANSPARENT); mLastCol = -1;
+        dc.setColor(p[(6 << 5) | 30], Graphics.COLOR_TRANSPARENT);
         dc.drawText(198, ty, font, ammo.format("%d"), Graphics.TEXT_JUSTIFY_LEFT);
-        bar(dc, 176, by, 130, 8, ammo * 2, p[(6 << 5) | 24], p[(2 << 5) | 8]);
-
-        /* kills */
-        fillRun(dc, 330, ty + 12, 10, 4, p[20]);
-        dc.setColor(p[26], Graphics.COLOR_TRANSPARENT); mLastCol = -1;
+        dc.setColor(p[26], Graphics.COLOR_TRANSPARENT);
         dc.drawText(348, ty, font, kills.format("%d"), Graphics.TEXT_JUSTIFY_LEFT);
-
-        /* fps + draw calls, small, bottom right */
-        dc.setColor(p[(3 << 5) | 28], Graphics.COLOR_TRANSPARENT); mLastCol = -1;
+        dc.setColor(p[(3 << 5) | 28], Graphics.COLOR_TRANSPARENT);
         dc.drawText(SCR_W - 44, by + 10, Graphics.FONT_XTINY,
                     curFps.format("%d") + "fps " + frameCalls.format("%d") + "c",
                     Graphics.TEXT_JUSTIFY_RIGHT);
+        mLastCol = -1;
+        mCalls += 7;
     }
 
     function renderLoading(dc) {
@@ -1674,7 +1701,7 @@ class Engine {
         var tk0 = System.getTimer();
         tickN++;
 
-        var moving = false;
+        var moving = false; var turning = false;
 
         if (wantRestart) { initWorld(0); }
         if (deadTic != 0) {
@@ -1682,8 +1709,8 @@ class Engine {
             if (viewCy > 80) { viewCy -= 6; }        /* camera drops to the floor */
         } else {
             var SPD = moveSpeed; var TURN = turnSpeed;
-            if (active(ACT_LEFT))  { pa = (pa - TURN) & NA_MASK; }
-            if (active(ACT_RIGHT)) { pa = (pa + TURN) & NA_MASK; }
+            if (active(ACT_LEFT))  { pa = (pa - TURN) & NA_MASK; turning = true; }
+            if (active(ACT_RIGHT)) { pa = (pa + TURN) & NA_MASK; turning = true; }
             var cs = cosTab[pa]; var sn = cosTab[(pa - NA_90) & NA_MASK];
             if (active(ACT_FWD))    { move((cs * SPD) >> FIX, (sn * SPD) >> FIX); moving = true; }
             if (active(ACT_BACK))   { move(-((cs * SPD) >> FIX), -((sn * SPD) >> FIX)); moving = true; }
@@ -1693,6 +1720,12 @@ class Engine {
             if (wantUse)  { useDoor(); }
         }
         wantFire = false; wantUse = false;
+
+        /* coarser rays while the view is moving: motion hides the blockiness
+         * and that is when frame rate matters most */
+        var mode = (moving || turning) ? 1 : 0;
+        xstep = (mode == 0) ? XSTEP_STILL : XSTEP_MOVE;
+        nray = nrayT[mode]; colAng = colAngT[mode]; colCos = colCosT[mode];
 
         updateDoors();
         updateActors();
