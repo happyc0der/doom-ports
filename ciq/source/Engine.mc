@@ -44,7 +44,8 @@ const XSTEP_STILL = 16;               /* pixels per ray when standing still (28 
 const XSTEP_MOVE  = 20;               /* pixels per ray while moving/turning (23 rays) */
 const TEXCOLS     = 16;               /* texture columns kept per texture (of 64) */
 const TAP_TURN    = 72;               /* angle units per edge tap (~13 degrees)   */
-const CACHE_SLICES = 4;               /* frames over which the wall cache is filled    */
+const CACHE_BUDGET_MS = 36;           /* fill cache rays only while the frame is under this */
+const CACHE_WAIT   = 3;               /* frames the view must hold still before filling     */
 const NRAY_MAX    = 28;
 const DIST_MIN = 24;
 const DIST_MAX = 16383;
@@ -117,7 +118,7 @@ class Engine {
     var colAngT; var colCosT;         /* [2] of per-ray tables, index = mode */
     var nrayT = [28, 23];
     var xstep = XSTEP_STILL; var nray = 28;                       /* of the walls on screen (sprites clip against them) */
-    var zbufT; var dispMode = 0; var cacheFill = 0;
+    var zbufT; var dispMode = 0; var cacheFill = 0; var stillN = 0;
     var hudBmp = null; var rRgt;      /* static HUD strip                  */
     var hudFull = null; var hudFullDc = null;          /* whole HUD, redrawn on change */
     var hudH = -1; var hudA = -1; var hudK = -1; var hudF = -1;
@@ -1079,6 +1080,13 @@ class Engine {
                 if (pdist < DIST_MIN) { pdist = DIST_MIN; }
 
                 var scale = pScale / pdist;
+                /* while moving, a floor or ceiling change that projects to
+                 * under two pixels is not worth a face and two fills */
+                if (tid == 0 && mode == 1) {
+                    var df = f - pf; if (df < 0) { df = -df; }
+                    var dcc = c - pc; if (dcc < 0) { dcc = -dcc; }
+                    if (((df > dcc ? df : dcc) * scale) < 512) { continue; }
+                }
                 var lv = pdist >> 10;
                 if (side != 0) { lv += 1; }
                 if (lv > 7) { lv = 7; }
@@ -1886,11 +1894,12 @@ class Engine {
         vpx = px; vpy = py; vpa = pa; vEye = eyeZ; vVcy = viewCy;
 
         var changed = (vpx != cPx || vpy != cPy || vpa != cPa || vEye != cEye || vVcy != cVcy || doorAnim);
-        if (changed) { cPx = vpx; cPy = vpy; cPa = vpa; cEye = vEye; cVcy = vVcy; cacheFill = 0; }
+        if (changed) { cPx = vpx; cPy = vpy; cPa = vpa; cEye = vEye; cVcy = vVcy; cacheFill = 0; stillN = 0; }
+        else { stillN++; }
         if (wallBuf == null) {
             dispMode = changed ? 1 : 0;
             renderWalls(dc, dispMode, 0, nrayT[dispMode]);
-        } else if (cacheFill >= CACHE_SLICES) {
+        } else if (cacheFill >= nrayT[0]) {
             dc.drawBitmap(0, 0, wallBuf);
             dispMode = 0;
             wallsCached++;
@@ -1898,12 +1907,15 @@ class Engine {
         } else {
             dispMode = 1;
             renderWalls(dc, 1, 0, nrayT[1]);
-            if (!changed) {
-                var per = (nrayT[0] + CACHE_SLICES - 1) / CACHE_SLICES;
-                var a = cacheFill * per; var b = a + per;
-                if (b > nrayT[0]) { b = nrayT[0]; }
-                renderWalls(wallDc, 0, a, b);
-                cacheFill++;
+            /* once the view has held still, fill the fine cache a ray at a
+             * time while this frame still has time to spare (the offscreen
+             * target is software-rendered, so a ray costs several ms) */
+            if (stillN >= CACHE_WAIT) {
+                var n = nrayT[0];
+                do {
+                    renderWalls(wallDc, 0, cacheFill, cacheFill + 1);
+                    cacheFill++;
+                } while (cacheFill < n && System.getTimer() - t0 < CACHE_BUDGET_MS);
             }
         }
         xstep = (dispMode == 0) ? XSTEP_STILL : XSTEP_MOVE; nray = nrayT[dispMode]; zbuf = zbufT[dispMode];
