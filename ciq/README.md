@@ -9,40 +9,52 @@ generated procedurally at start-up — there are no image resources.
 Verified in the Connect IQ simulator: 20 fps (timer-bound), ~400–1000
 `fillRectangle` calls per frame, no watchdog trips.
 
-## How the port works
+## How the port works, and what the watch taught us
 
 The CE engine never writes pixels; it writes vertical runs of one colour, 8 px
-wide (`fill_col8`). That is exactly `dc.fillRectangle`, so the algorithm carries
-over unchanged. What changes is the cost model:
+wide (`fill_col8`). That is `dc.fillRectangle`, so the algorithm carried over
+unchanged. Then the watch's own numbers (micro-benchmarks written to the device
+log — `BENCH` in `Engine.mc`) rewrote the cost model:
 
-| | TI-84 Plus CE | Connect IQ |
-|---|---|---|
-| bound by | bytes painted (122 cycles/byte) | **loop iterations per callback** |
-| hard limit | none — just slow | **watchdog kills the callback** |
-| `*`, `>>`, `&` | library calls on 24-bit ints | native 32-bit |
+| on the Venu X1 | cost |
+|---|---|
+| one interpreted loop iteration | ~24 µs |
+| `fillRectangle`, any size | ~120 µs |
+| a method call | ~60 µs |
+| `drawScaledBitmap` / `drawBitmap`, any size, to the screen | ~200 µs — **hardware, pixel count is free** |
+| drawing into an offscreen `BufferedBitmap` | ~3× slower per call (software) |
+| blitting a 448×400 offscreen bitmap to the screen | ~15 ms |
+| the watchdog | kills any callback that runs long (~10k iterations in the simulator) |
 
-The Connect IQ watchdog is the whole design constraint. Measured in the
-simulator: a single callback dies somewhere between **8k and 16k** simple loop
-iterations. So:
+So the renderer is built around *number of calls*, not pixels:
 
-- **Start-up is 55 tasks, one per frame** (`buildTasks`). Palette, cos table,
-  each texture strip, each sprite pass, each weapon bitmap — nothing runs long
-  enough to trip it. There is a progress bar while it happens (~3 s).
+- **Every textured wall face is one clipped `drawScaledBitmap`** of a prebuilt
+  64×32 texture (4 textures × 8 shade levels). No texel loop.
+- **Every sprite is one prebuilt palette bitmap per frame**, cropped to its
+  opaque box, shaded with `setPalette`, drawn once per run of rays not hidden
+  by a wall.
+- **The DDA compares a precomputed per-cell key**: the common "nothing changed"
+  step is one byte read and one compare. The solid map border replaces the
+  bounds checks.
+- **Rays are 16 px wide when standing still, 28 px while moving or turning.**
+- **The wall pass is cached**: after you stop, it is rendered into an
+  offscreen bitmap over four frames (a quarter each, no hitch) and then blitted
+  with one call per frame until the view changes. Standing still costs ~12
+  calls a frame.
+- **Things are culled by a 90° cone** before any angle or frame maths; each
+  soldier re-checks line of sight every third tick.
+- **The HUD is composed into a bitmap when a value changes** and blitted every
+  frame — the display is double-buffered, so skipping the HUD on some frames
+  makes it blink.
+- **Pain and muzzle flash are one translucent fill** (alpha blending) instead
+  of three palette variants of every bitmap.
+- **Start-up is ~140 small tasks**, a few per timer tick, so nothing trips the
+  watchdog; the loading bar covers it.
 - **Game logic runs in the timer callback, rendering in `onUpdate`** — two
-  callbacks, two budgets.
-- **Wall and sprite loops walk texels, not rows**, and never more texels than
-  half the rows they cover (`ks` in `wallSlice` / `drawBillboard`). A 400-row
-  wall face costs ≤32 iterations; a far one costs a handful.
-- **Sprites are capped at ~14 columns** whatever their size, and a per-frame
-  budget (`ITER_BUDGET`) drops the farthest ones first when a crowd is on screen.
-- **The rifle is prerendered** into 9 small palette `BufferedBitmap`s
-  (3 frames × 3 palettes) and drawn with one `drawScaledBitmap`. (Do not call
-  `clear()` on a fresh palette bitmap — that paints it black. It starts
-  transparent.)
+  callbacks, two watchdog budgets.
 
-Per-frame rates (movement, enemy speed, fire rate, projectile speed, animation
-tics) are rescaled from the CE's ~6 fps to ~20 fps so the game plays at the same
-real-world pace.
+Measured on the watch: 20 fps standing still (timer-capped), ~15–18 while
+moving, from 1–2 fps for the straight port.
 
 ## Battery
 
@@ -115,11 +127,15 @@ changing either; the PNGs are checked in.
 
 Taps accumulate, so mashing forward walks further.
 
-## Profiling
+## Profiling on the watch
 
-Set `PROFILE = true` in `Engine.mc`: every 8 frames the console prints fps,
-draw calls, and wall/sprite loop iterations. Iterations are what the watchdog
-counts; keep the sum comfortably under ~6000 per frame.
+Create an empty `GARMIN/Apps/LOGS/DoomCE.TXT` on the device (`tools/mtp_push
+/dev/null DoomCE.TXT GARMIN/Apps/LOGS` after `: > /tmp/DoomCE.TXT`) and
+`System.println` output is appended to it. With `PROFILE = true` a line every
+32 frames gives fps, draw calls, cached frames and per-phase milliseconds
+(walls / things / weapon / HUD / tick); `BENCH = true` runs the
+micro-benchmarks at start-up. Pull it back with `mtp-getfile <id>` (id from
+`mtp-files`).
 
 ## Layout
 

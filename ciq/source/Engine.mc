@@ -41,7 +41,8 @@ const NA_90    = 512;
 
 const PROJD    = 388;                 /* (SCR_W/2) / tan(30 deg)          */
 const XSTEP_STILL = 16;               /* pixels per ray when standing still (28 rays) */
-const XSTEP_MOVE  = 24;               /* pixels per ray while moving/turning (19 rays) */
+const XSTEP_MOVE  = 28;               /* pixels per ray while moving/turning (16 rays) */
+const CACHE_SLICES = 4;               /* frames over which the wall cache is filled    */
 const NRAY_MAX    = 28;
 const DIST_MIN = 24;
 const DIST_MAX = 16383;
@@ -112,13 +113,14 @@ class Engine {
     /* ---------- tables ---------- */
     var cosTab;  var icosTab;         /* [NA]                              */
     var colAngT; var colCosT;         /* [2] of per-ray tables, index = mode */
-    var nrayT = [28, 19];
-    var xstep = XSTEP_STILL; var nray = 28; var colAng; var colCos;
+    var nrayT = [28, 16];
+    var xstep = XSTEP_STILL; var nray = 28;                       /* of the walls on screen (sprites clip against them) */
+    var zbufT; var dispMode = 0; var cacheFill = 0;
     var hudBmp = null; var rRgt;      /* static HUD strip                  */
     var hudFull = null; var hudFullDc = null;          /* whole HUD, redrawn on change */
     var hudH = -1; var hudA = -1; var hudK = -1; var hudF = -1;
     var wallBuf = null; var wallDc = null;             /* offscreen wall pass          */
-    var cPx = -1; var cPy = -1; var cPa = -1; var cEye = -1; var cVcy = -1; var cXs = -1;
+    var cPx = -1; var cPy = -1; var cPa = -1; var cEye = -1; var cVcy = -1;
     var doorAnim = false;             /* a door moved this tick: walls must re-render */
     var wallsCached = 0;              /* profiling: frames that reused the wall buffer */
     var profN = 0;
@@ -268,9 +270,9 @@ class Engine {
         icosTab = new [NA];
         colAngT = [ new [NRAY_MAX], new [NRAY_MAX] ];
         colCosT = [ new [NRAY_MAX], new [NRAY_MAX] ];
-        colAng = colAngT[0]; colCos = colCosT[0];
         atanTab = new [65];
-        zbuf    = new [NRAY_MAX];
+        zbufT   = [ new [NRAY_MAX], new [NRAY_MAX] ];
+        zbuf    = zbufT[0];
         wallTex = new [NWALLTEX * TEXW * TEXH]b;
         eGfx    = new [NFRAME * SPR_SZ]b;
         pkGfx   = new [2 * PK_W * PK_H]b;
@@ -1005,11 +1007,11 @@ class Engine {
      * is one ByteArray read and one compare.
      * ------------------------------------------------------------------ */
 
-    function renderWalls(dc) {
-        var cosT = cosTab; var icosT = icosTab; var cAng = colAng; var cCos = colCos;
-        var xs = xstep; var nr = nray;
+    function renderWalls(dc, mode, r0, r1) {
+        var cosT = cosTab; var icosT = icosTab; var cAng = colAngT[mode]; var cCos = colCosT[mode];
+        var xs = (mode == 0) ? XSTEP_STILL : XSTEP_MOVE;
         var key = cellKey; var wld = world; var hm = hmap; var dOpen = doorOpen;
-        var zb = zbuf; var tb = texBmp; var sRGB = shadeRGB;
+        var zb = zbufT[mode]; var tb = texBmp; var sRGB = shadeRGB;
         var pxx = px; var pyy = py; var paa = pa; var eye = eyeZ; var vcy = viewCy;
         var pScale = projScale;
         var mapX0 = pxx >> FIX; var mapY0 = pyy >> FIX;
@@ -1023,7 +1025,7 @@ class Engine {
         var TR = Graphics.COLOR_TRANSPARENT;
         var calls = 0;
 
-        for (var r = 0; r < nr; r++) {
+        for (var r = r0; r < r1; r++) {
             var x = r * xs;
             var xw = (x + xs > SCR_W) ? SCR_W - x : xs;
             var ang = paa + cAng[r];
@@ -1743,7 +1745,7 @@ class Engine {
 
         var moving = false; var turning = false;
 
-        if (wantRestart) { initWorld(0); cPx = -1; }
+        if (wantRestart) { initWorld(0); cPx = -1; cacheFill = 0; }
         if (deadTic != 0) {
             if (deadTic < 40) { deadTic++; }
             if (viewCy > 80) { viewCy -= 6; }        /* camera drops to the floor */
@@ -1760,12 +1762,6 @@ class Engine {
             if (wantUse)  { useDoor(); }
         }
         wantFire = false; wantUse = false;
-
-        /* coarser rays while the view is moving: motion hides the blockiness
-         * and that is when frame rate matters most */
-        var mode = (moving || turning) ? 1 : 0;
-        xstep = (mode == 0) ? XSTEP_STILL : XSTEP_MOVE;
-        nray = nrayT[mode]; colAng = colAngT[mode]; colCos = colCosT[mode];
 
         updateDoors();
         updateActors();
@@ -1852,19 +1848,32 @@ class Engine {
 
         mCalls = 0; mLastCol = -1; mIters = 0; frameN++;
         var t0 = System.getTimer();
+        var changed = (px != cPx || py != cPy || pa != cPa || eyeZ != cEye || viewCy != cVcy || doorAnim);
+        if (changed) { cPx = px; cPy = py; cPa = pa; cEye = eyeZ; cVcy = viewCy; cacheFill = 0; }
         if (wallBuf == null) {
-            renderWalls(dc);
-        } else {
-            /* re-cast only when something the walls depend on changed */
-            if (px != cPx || py != cPy || pa != cPa || eyeZ != cEye || viewCy != cVcy || xstep != cXs || doorAnim) {
-                renderWalls(wallDc);
-                cPx = px; cPy = py; cPa = pa; cEye = eyeZ; cVcy = viewCy; cXs = xstep;
-            } else {
-                wallsCached++;
-            }
+            dispMode = changed ? 1 : 0;
+            renderWalls(dc, dispMode, 0, nrayT[dispMode]);
+        } else if (cacheFill >= CACHE_SLICES) {
+            /* view unchanged and the cache is complete: one blit */
             dc.drawBitmap(0, 0, wallBuf);
+            dispMode = 0;
+            wallsCached++;
             mCalls++;
+        } else {
+            /* moving, or just stopped: draw straight to the screen with coarse
+             * rays (the offscreen target is software-rendered and slow), and
+             * while the view holds still fill a quarter of the fine cache */
+            dispMode = 1;
+            renderWalls(dc, 1, 0, nrayT[1]);
+            if (!changed) {
+                var per = (nrayT[0] + CACHE_SLICES - 1) / CACHE_SLICES;
+                var a = cacheFill * per; var b = a + per;
+                if (b > nrayT[0]) { b = nrayT[0]; }
+                renderWalls(wallDc, 0, a, b);
+                cacheFill++;
+            }
         }
+        xstep = (dispMode == 0) ? XSTEP_STILL : XSTEP_MOVE; nray = nrayT[dispMode]; zbuf = zbufT[dispMode];
         var t1 = System.getTimer();
         var wallIters = mIters;
         renderThings(dc);
