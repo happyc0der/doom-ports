@@ -1,4 +1,7 @@
-/* The one full-screen view.  A repeating timer paces redraws; game logic
+/* DOOMCE for Connect IQ - view, frame pacing and input.
+ * Copyright (C) 2026 happyc0der.  GPL-3.0-or-later, see ../LICENSE.
+ *
+ * The one full-screen view.  A repeating timer paces redraws; game logic
  * and rendering both happen inside onUpdate (one frame = one tick), and a
  * frame that overruns the timer period asks for the next one at once
  * instead of waiting for the next tick.  Between frames the CPU idles -

@@ -1,17 +1,21 @@
 #!/bin/sh
-# Build, (re)start the simulator, push the app, and tail its console.
-# monkeydo hangs if the simulator is already running an app, so always
-# restart it.  Usage: ./run.sh [seconds-to-wait]
+# Build, (re)start the simulator, push the app, and show its console.
+# Usage: ./run.sh [seconds-to-wait]   (default 25)
+#
+# The simulator is restarted every time: monkeydo hangs silently if an app is
+# already running in it.  The SDK Manager's copy of the simulator is used -
+# the one the Homebrew cask puts in /Applications cannot find the SDK's
+# version.txt and shows an error dialog on every launch.
+set -e
 cd "$(dirname "$0")"
 WAIT="${1:-25}"
-./build.sh 2>&1 | grep -E 'ERROR|error:|BUILD' | grep -v WARNING
-if ! grep -q . bin/DoomCE-venux1.prg 2>/dev/null || [ "$(find bin/DoomCE-venux1.prg -newer source/Engine.mc)" = "" ]; then echo 'BUILD FAILED (binary not updated)'; exit 1; fi
-pkill -f MonkeyDoDeux; pkill -f "ConnectIQ.app/Contents/MacOS/simulator"; sleep 1
-# Use the SDK Manager's copy of the simulator: the Homebrew cask moves the app
-# to /Applications, where it can't find the SDK's version.txt and complains.
-SDK_BIN="$(cat "$HOME/Library/Application Support/Garmin/ConnectIQ/current-sdk.cfg")bin"
-nohup "$SDK_BIN/ConnectIQ.app/Contents/MacOS/simulator" > bin/simulator.log 2>&1 &
+./build.sh
+SDK="$(cat "$HOME/Library/Application Support/Garmin/ConnectIQ/current-sdk.cfg")"
+pkill -f MonkeyDoDeux 2>/dev/null || true
+pkill -f "ConnectIQ.app/Contents/MacOS/simulator" 2>/dev/null || true
+sleep 1
+nohup "${SDK}bin/ConnectIQ.app/Contents/MacOS/simulator" > bin/simulator.log 2>&1 &
 sleep 6
-nohup monkeydo bin/DoomCE-venux1.prg venux1 > bin/sim.log 2>&1 &
+nohup "${SDK}bin/monkeydo" bin/DoomCE-venux1.prg venux1 > bin/sim.log 2>&1 &
 sleep "$WAIT"
 tail -4 bin/sim.log

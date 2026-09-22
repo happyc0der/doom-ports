@@ -3,21 +3,25 @@
  *
  * Copyright (C) 2026 happyc0der.  GPL-3.0-or-later, see ../LICENSE.
  *
- * The CE engine paints the screen as vertical runs of one colour, 8 px
- * wide (fill_col8).  Connect IQ has no framebuffer, but it has
- * dc.fillRectangle - so every run becomes one fillRectangle call and the
- * algorithm carries over unchanged.  What changes is the cost model:
- * the CE was bound by bytes painted, this is bound by draw calls issued.
- * So the inner loops here walk *texels*, not pixel rows, and adjacent
- * runs of the same colour are merged before they reach the dc.
+ * Same engine as src/main.c - fixed point (1 cell == 256), 2048 angle
+ * units per turn, the same DDA, AI, doors and projectiles - but the
+ * renderer is built around what the watch can do quickly.  Measured on
+ * a Venu X1, an interpreted loop iteration costs ~24 us and any dc call
+ * ~0.2 ms, while a bitmap draw of any size is done in hardware.  So:
  *
- * All artwork is still generated procedurally at start-up; there are no
- * image resources.  Generation is chopped into chunks spread over the
- * first few frames so no single call can trip the Connect IQ watchdog.
+ *   - every wall face is one drawScaledBitmap of a prebuilt 1x32
+ *     texture column, at exactly the ray's width;
+ *   - every sprite is one prebuilt palette bitmap per frame, shaded by
+ *     setPalette, drawn once per run of rays not hidden by a wall;
+ *   - the DDA compares a per-cell key so the common step is one read;
+ *   - the wall pass is cached in an offscreen bitmap while the view
+ *     holds still, and blitted with one call per frame;
+ *   - the logic tick runs between the wall draws and the sprite draws,
+ *     so the CPU works while the GPU draws.
  *
- * Fixed point and angles are exactly as in src/main.c: 1 cell == 256,
- * 2048 angle units per turn.  Monkey C Numbers are 32-bit, so none of
- * the eZ80's 24-bit contortions are needed.
+ * All artwork is generated procedurally at start-up; there are no image
+ * resources.  Generation is ~140 tasks spread over the first frames so
+ * no single callback can trip the Connect IQ watchdog.
  * ------------------------------------------------------------------ */
 import Toybox.Graphics;
 import Toybox.Lang;
@@ -66,7 +70,6 @@ const MAXDOOR  = 8;
 const SPR_W    = 28;
 const SPR_H    = 36;
 const SPR_SZ   = 1008;
-const NROT     = 5;
 const F_WALK   = 0;
 const F_FIRE   = 10;
 const F_DIE    = 15;
@@ -131,7 +134,7 @@ class Engine {
     var profN = 0;
     var atanTab;                      /* [65]                              */
     var shade;   var shadeE;          /* [8] of ByteArray[256]             */
-    var pal;                          /* [3] of Array[256] rgb             */
+    var pal;                          /* [1] of Array[256] rgb             */
     var shadeRGB; var shadeERGB;      /* [3][8] of Array[256] rgb          */
     var wallTex;                      /* ByteArray [tex][x][y]             */
     var texBmp;                       /* [NWALLTEX*8*TEXCOLS] 1x32 bitmaps: (tex, shade, column) */
@@ -144,7 +147,7 @@ class Engine {
     var sprMap;                       /* [NFRAME*2] frame*2+mirror -> bitmap index */
     var PK0 = 0; var PJ0 = 0;         /* first pickup / projectile bitmap  */
     var cellKey;                      /* ByteArray: equal keys => same floor/ceiling */
-    var tintPain = null; var tintFlash = null;
+    var tintPain = null;
     var projd = PROJD;
     var projScale = PROJD * ONE;
     var moveSpeed = 9;                /* 8.8 cells per frame               */
@@ -176,14 +179,13 @@ class Engine {
     var wpnTop; var wpnBot;           /* [NWPN] of ByteArray[WPN_W]        */
     var wpnBmp = null;                /* [3 pal][NWPN] BufferedBitmap refs */
     var wpnTic = 0; var wpnFrame = 0; var bobPhase = 0; var bobX = 0; var bobY = 0;
-    var flashTic = 0; var painTic = 0;
+    var painTic = 0;
 
     /* ---------- player ---------- */
     var px = 0; var py = 0; var pa = 0;
     var health = 100; var ammo = 50; var kills = 0;
     var viewCy = VIEW_CY;
     var deadTic = 0;
-    var curPal = 0;
 
     /* ---------- input ---------- */
     var burst;                        /* [9] frames left per action        */
@@ -208,8 +210,7 @@ class Engine {
     var tTick = 0;
     var logo = null;                  /* title logo, loaded on first draw   */
     var benchStep = 0; var benchBmp = null;
-    var tWalls = 0; var tThings = 0; var tWeapon = 0; var tHud = 0;
-    var frameN = 0;
+    var tWalls = 0; var tThings = 0; var tHud = 0;
 
     /* 8 colour ramps x 32 brightness steps = 256 palette entries. */
     var rampRGB = [ [200,200,200], [195,85,65], [150,105,55], [116,124,92],
@@ -334,8 +335,7 @@ class Engine {
         sprOx = new [ns]; sprOy = new [ns]; sprBw = new [ns]; sprBh = new [ns];
         wpnBox = new [NWPN];
         if (Graphics has :createColor) {
-            tintPain  = Graphics.createColor(150, 255, 40, 20);
-            tintFlash = Graphics.createColor(70, 255, 240, 200);
+            tintPain = Graphics.createColor(150, 255, 40, 20);
         }
         for (var i = 0; i < 9; i++) { burst[i] = 0; }
         for (var i = 0; i < MAXPROJ; i++) { jOn[i] = 0; }
@@ -388,19 +388,16 @@ class Engine {
 
     function rgb(r, g, b) { return (r << 16) | (g << 8) | b; }
 
+    /* 8 colour ramps x 32 brightness steps = 256 palette entries.  A colour
+     * byte is (ramp << 5) | brightness, which makes shading a subtract and
+     * index 0 pure black == sprite transparency. */
     function initPalette0(unused) {
-        pal = [ new [256], new [256], new [256] ];
-        var pn = pal[0]; var pp = pal[1]; var pf = pal[2];
+        pal = [ new [256] ];
+        var pn = pal[0];
         for (var r = 0; r < 8; r++) {
             var rr = rampRGB[r];
             for (var s = 0; s < 32; s++) {
-                var i = (r << 5) | s;
-                var R = rr[0] * s / 31; var G = rr[1] * s / 31; var B = rr[2] * s / 31;
-                pn[i] = rgb(R, G, B);
-                /* damage: push everything toward red.  flash: lift everything. */
-                var pr = R + (255 - R) * 3 / 5;
-                pp[i] = rgb(pr, G / 3, B / 3);
-                pf[i] = rgb(R + (255 - R) / 3, G + (255 - G) / 3, B + (255 - B) / 4);
+                pn[(r << 5) | s] = rgb(rr[0] * s / 31, rr[1] * s / 31, rr[2] * s / 31);
             }
         }
         shade  = new [8];
@@ -954,7 +951,7 @@ class Engine {
         health = 100; ammo = 50; kills = 0;
         viewCy = VIEW_CY; deadTic = 0;
         wpnTic = 0; wpnFrame = 0; bobPhase = 0; bobX = 0; bobY = 0;
-        flashTic = 0; painTic = 0;
+        painTic = 0;
         for (var i = 0; i < 9; i++) { burst[i] = 0; }
         held = ACT_NONE; wantFire = false; wantUse = false; wantRestart = false;
         eyeZ = floorz(px >> FIX, py >> FIX) + EYE_H;
@@ -1642,7 +1639,6 @@ class Engine {
         if (ammo <= 0 || wpnTic != 0 || deadTic != 0) { return; }
         ammo--;
         wpnTic = 10;
-        flashTic = 2;
         var cs = cosTab[pa]; var sn = cosTab[(pa - NA_90) & NA_MASK];
         var best = -1; var bestd = 1 << 20;
         for (var i = 0; i < nact; i++) {
@@ -1664,7 +1660,7 @@ class Engine {
     function hurtPlayer(dmg) {
         if (deadTic != 0) { return; }
         health -= dmg;
-        painTic = 3;
+        painTic = 4;
         if (health <= 0) { health = 0; deadTic = 1; }
     }
 
@@ -1729,7 +1725,6 @@ class Engine {
                 if (ammo > 99) { ammo = 99; }
             }
             pOn[i] = 0;
-            flashTic = 1;
         }
     }
 
@@ -1840,13 +1835,13 @@ class Engine {
      * one frame: logic then render
      * ------------------------------------------------------------------ */
 
-    /* Logic runs from the timer callback, rendering from onUpdate: two
-     * separate callbacks, so each gets its own watchdog budget. */
+    /* One logic step.  Called from render(), between the wall draws and
+     * the sprite draws, so it runs while the GPU is busy. */
     function tick() {
         var tk0 = System.getTimer();
         tickN++;
 
-        var moving = false; var turning = false;
+        var moving = false;
 
         if (wantRestart) { initWorld(0); cPx = -1; cacheFill = 0; }
         if (deadTic != 0) {
@@ -1854,8 +1849,8 @@ class Engine {
             if (viewCy > 80) { viewCy -= 6; }        /* camera drops to the floor */
         } else {
             var SPD = moveSpeed; var TURN = turnSpeed;
-            if (active(ACT_LEFT))  { pa = (pa - TURN) & NA_MASK; turning = true; }
-            if (active(ACT_RIGHT)) { pa = (pa + TURN) & NA_MASK; turning = true; }
+            if (active(ACT_LEFT))  { pa = (pa - TURN) & NA_MASK; }
+            if (active(ACT_RIGHT)) { pa = (pa + TURN) & NA_MASK; }
             var cs = cosTab[pa]; var sn = cosTab[(pa - NA_90) & NA_MASK];
             if (active(ACT_FWD))    { move((cs * SPD) >> FIX, (sn * SPD) >> FIX); moving = true; }
             if (active(ACT_BACK))   { move(-((cs * SPD) >> FIX), -((sn * SPD) >> FIX)); moving = true; }
@@ -1894,9 +1889,7 @@ class Engine {
             wpnFrame = 0;
         }
 
-        curPal = (flashTic > 0) ? 2 : ((painTic > 0) ? 1 : 0);
-        if (flashTic > 0) { flashTic--; }
-        if (painTic > 0)  { painTic--; }
+        if (painTic > 0) { painTic--; }
         tTick += System.getTimer() - tk0;
     }
 
@@ -1952,7 +1945,7 @@ class Engine {
     function render(dc) {
         if (!initDone()) { initChunk(); renderLoading(dc); wantMore = false; return; }
 
-        mCalls = 0; mLastCol = -1; mIters = 0; frameN++;
+        mCalls = 0; mLastCol = -1; mIters = 0;
         var t0 = System.getTimer();
         vpx = px; vpy = py; vpa = pa; vEye = eyeZ; vVcy = viewCy;
 
@@ -1997,7 +1990,7 @@ class Engine {
          * software on this watch, so a full-screen tint cost ~20 ms;
          * a 24 px frame is a ninth of the pixels.  The muzzle flash is
          * carried by the weapon's own flash frame. */
-        if (curPal == 1 && tintPain != null) {
+        if (painTic > 0 && tintPain != null) {
             dc.setColor(tintPain, Graphics.COLOR_TRANSPARENT);
             dc.fillRectangle(0, 0, SCR_W, 24);
             dc.fillRectangle(0, VIEW_H - 24, SCR_W, 24);
@@ -2026,7 +2019,7 @@ class Engine {
                     System.println("fps=" + curFps + " calls=" + frameCalls + " wallIters=" + wallIters + " cached=" + cached
                                    + " ms/8f walls=" + tWalls + " things+wpn=" + tThings + " hud=" + tHud + " tick=" + tTick);
                 }
-                tWalls = 0; tThings = 0; tWeapon = 0; tHud = 0; tTick = 0;
+                tWalls = 0; tThings = 0; tHud = 0; tTick = 0;
             }
         }
         lastT = t4;

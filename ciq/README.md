@@ -6,8 +6,17 @@ variable floor and ceiling heights, sliding doors, enemies with the same
 state-machine AI, dodgeable projectiles, pickups, status bar. All art is still
 generated procedurally at start-up — there are no image resources.
 
-Verified in the Connect IQ simulator: 20 fps (timer-bound), ~400–1000
-`fillRectangle` calls per frame, no watchdog trips.
+Measured on the watch: **20 fps standing still, ~15.6 fps average moving**
+(the straight port ran at 1–2). It is a plain watch-app with no permissions
+and no background service, so it costs no battery unless it is open.
+
+Quick start, if you already have the Connect IQ SDK Manager and libmtp:
+
+```sh
+./install.sh        # build, wait for the watch on USB, push it
+```
+
+Everything below explains the pieces.
 
 ## How the port works, and what the watch taught us
 
@@ -30,13 +39,14 @@ So the renderer is built around *number of calls*, not pixels:
 
 - **Every textured wall face is one `drawScaledBitmap`** of a prebuilt 1×32
   texture column (4 textures × 8 shade levels × 16 columns = 512 tiny
-  bitmaps), drawn at exactly the ray's width. Step and beam faces of 4, 8 or
-  12 texels use exact-height columns (768 more) so they need no clip; faces
-  under 6 px tall are one flat fill in the texture's average colour. No texel loop, no clip for a
+  bitmaps), drawn at exactly the ray's width: no texel loop, no clip for a
   full-height face, and the GPU scales 32 pixels rather than a whole texture
-  that is then clipped away. (The first version drew the full 64-column
-  texture clipped to the ray; the GPU work for that showed up as a mystery
-  10–30 ms charged to whatever call came next.)
+  that is then clipped away. Step and beam faces of 4, 8 or 12 texels use
+  exact-height columns (768 more) so they need no clip either; faces under
+  6 px tall are one flat fill in the texture's average colour. (The first
+  version drew the full 64-column texture clipped to the ray; the GPU work
+  for that showed up as a mystery 10–30 ms charged to whatever call came
+  next.)
 - **Every sprite is one prebuilt palette bitmap per frame**, cropped to its
   opaque box, shaded with `setPalette`, drawn once per run of rays not hidden
   by a wall.
@@ -44,10 +54,12 @@ So the renderer is built around *number of calls*, not pixels:
   step is one byte read and one compare. The solid map border replaces the
   bounds checks.
 - **Rays are 16 px wide when standing still, 20 px while moving or turning.**
-- **The wall pass is cached**: after you stop, it is rendered into an
-  offscreen bitmap over four frames (a quarter each, no hitch) and then blitted
-  with one call per frame until the view changes. Standing still costs ~12
-  calls a frame.
+- **The wall pass is cached**: once the view has held still for three frames
+  it is rendered into an offscreen bitmap a ray or two per frame, only while
+  the frame has time to spare, and then blitted with one call per frame until
+  the view changes. Standing still costs ~12 calls a frame. (Rendering *into*
+  the offscreen bitmap is software and ~3× slower per call, which is why it
+  is never done while moving.)
 - **Floor and ceiling fills are merged across adjacent rays** when the colour
   matches and the edge is within a pixel: a corridor's ~46 flat fills become
   ~10.
@@ -64,10 +76,12 @@ So the renderer is built around *number of calls*, not pixels:
 - **Pain is a translucent red border.** Alpha fills are software-blended on
   this watch (~20 ms full-screen), so the border is a ninth of the pixels;
   the muzzle flash is carried by the weapon's own flash frame.
-- **Start-up is ~140 small tasks**, a few per timer tick, so nothing trips the
-  watchdog; the loading bar covers it.
-- **Game logic runs in the timer callback, rendering in `onUpdate`** — two
-  callbacks, two watchdog budgets.
+- **Start-up is ~140 small tasks**, a few per tick, so nothing trips the
+  watchdog; the loading bar covers the 10–20 s it takes on the watch (most of
+  it building ~1,300 tiny bitmaps).
+- **One frame is one `onUpdate`**: the timer only requests redraws. Logic
+  and rendering share the callback, and the loops are small enough that the
+  watchdog is not a concern once start-up is done.
 
 Measured on the watch over the last profiling session: **20 fps standing
 still** (timer-capped) and **15.6 fps average while moving**, from 1–2 fps for
@@ -92,41 +106,57 @@ frames; there is no busy loop.
 
 ## Build
 
-```sh
-brew install --cask connectiq connectiq-sdk-manager
-```
-
-Open **SdkManager**, sign in with your Garmin account, and download the
-**Venu X1** device under Devices. Then:
+You need a JDK, the Connect IQ SDK, and the Venu X1 device definition. The
+SDK Manager provides the last two (it needs a Garmin account to download):
 
 ```sh
-./build.sh          # → bin/DoomCE-venux1.prg   (generates developer_key on first run)
-./run.sh            # build, restart the simulator, push, show console for 25 s
+brew install --cask temurin connectiq-sdk-manager
+open -a SdkManager      # sign in; download an SDK and, under Devices, "Venu X1"
 ```
 
-`run.sh` restarts the simulator every time: `monkeydo` hangs silently if an app
-is already running in it. It launches the SDK Manager's copy of the simulator,
-not the one the Homebrew cask put in `/Applications` — that one can't find the
-SDK's `version.txt` and shows an error dialog on every launch.
+`build.sh` uses whichever SDK the manager marked current (that keeps the
+compiler, simulator and device files from the same SDK) and generates a
+developer signing key on first run:
+
+```sh
+./build.sh              # → bin/DoomCE-venux1.prg
+./run.sh                # build, restart the simulator, push, show its console for 25 s
+```
+
+`run.sh` restarts the simulator every time because `monkeydo` hangs silently
+if an app is already running in it, and it launches the SDK's own copy of the
+simulator: the one the `connectiq` Homebrew cask puts in `/Applications`
+cannot find the SDK's `version.txt` and shows an error dialog on every launch.
+(That cask is not needed at all if you use the SDK Manager.)
 
 ## Install on the watch
 
-The Venu X1 is MTP-only over USB, so it does not mount as a drive on macOS.
-`tools/mtp_push.c` pushes a file straight into `GARMIN/Apps` with libmtp
-(the stock `mtp-sendfile` fails on this watch because it never sets a
-storage id):
+The Venu X1 is MTP-only over USB, so it does not mount as a drive on macOS,
+and libmtp's stock `mtp-sendfile` fails on it (it never sets a storage id).
+`tools/mtp_push.c` is a small libmtp program that does it right:
 
 ```sh
 brew install libmtp
-cd tools && cc -O2 $(pkg-config --cflags --libs libmtp) -o mtp_push mtp_push.c
-./mtp_push ../bin/DoomCE-venux1.prg DoomCE.prg
+./install.sh            # builds the app and tools/mtp_push, waits for the watch, pushes
 ```
 
-Plug the watch in, unlocked, before running it. It replaces any previous copy.
-Then unplug, and DOOMCE appears in the app list (developer mode must be on:
-Settings → System → About, tap the serial number seven times). No store
-submission needed. A GUI alternative is OpenMTP (`brew install --cask openmtp`):
-drag the `.prg` into `GARMIN/Apps`.
+or by hand:
+
+```sh
+make -C tools
+tools/mtp_push bin/DoomCE-venux1.prg DoomCE.prg          # into GARMIN/Apps, replacing any old copy
+```
+
+Plug the watch in, unlocked; it can take 10–20 s to appear on the bus, and if
+it charges but never appears, re-seat the clip. Then unplug and DOOMCE is in
+the app list.
+
+**Developer mode must be on** or the watch will not run a sideloaded app:
+Settings → System → About, tap the serial number seven times; a *Developer
+Mode* entry then appears at the bottom of that page.
+
+A GUI alternative is OpenMTP (`brew install --cask openmtp`): drag the `.prg`
+into `GARMIN/Apps`.
 
 ## Art
 
@@ -153,13 +183,21 @@ accumulate: earlier builds let turn bursts pile up and the aim overshot.
 
 ## Profiling on the watch
 
-Create an empty `GARMIN/Apps/LOGS/DoomCE.TXT` on the device (`tools/mtp_push
-/dev/null DoomCE.TXT GARMIN/Apps/LOGS` after `: > /tmp/DoomCE.TXT`) and
-`System.println` output is appended to it. With `PROFILE = true` a line every
-32 frames gives fps, draw calls, cached frames and per-phase milliseconds
-(walls / things / weapon / HUD / tick); `BENCH = true` runs the
-micro-benchmarks at start-up. Pull it back with `mtp-getfile <id>` (id from
-`mtp-files`).
+The watch appends `System.println` output to `GARMIN/Apps/LOGS/DoomCE.TXT`,
+but only if that file already exists. Create it once, build with
+`PROFILE = true` (top of `Engine.mc`), play, then pull the log:
+
+```sh
+: > /tmp/DoomCE.TXT && tools/mtp_push /tmp/DoomCE.TXT DoomCE.TXT GARMIN/Apps/LOGS
+# ... build with PROFILE = true, install, play ...
+tools/pull_log.sh       # saves the log and summarises still vs moving fps
+```
+
+A profile line every 32 frames gives fps, draw calls, cached frames and
+per-phase milliseconds (walls / things+weapon / HUD / tick); the same build
+shows fps and call count in the HUD. `BENCH = true` runs the micro-benchmarks
+behind the cost table above at start-up. The log grows across runs; delete it
+on the watch (`mtp-delfile -n <id>`) to start fresh.
 
 ## Layout
 
@@ -168,7 +206,17 @@ manifest.xml            watch-app, venux1 only, no permissions
 monkey.jungle
 source/DoomCEApp.mc     entry point
 source/DoomView.mc      timer, onUpdate, touch/button delegate
-source/Engine.mc        the game (tables, art, world, renderer, AI)
-resources/              app name + launcher icon
-build.sh  run.sh
+source/Engine.mc        the game: tables, art, world, renderer, AI, frame loop
+resources/              app name, launcher icon, title logo
+build.sh                compile with the SDK Manager's current SDK
+run.sh                  build + simulator
+install.sh              build + push to the watch over MTP
+tools/mtp_push.c        libmtp pusher (make -C tools)
+tools/pull_log.sh       fetch and summarise the on-device profile log
+tools/make_art.py       regenerates the icon and logo PNGs
 ```
+
+Knobs, all at the top of `Engine.mc` / `DoomView.mc`: `TICK_MS` (frame
+cadence; 100 halves the battery cost of playing), `XSTEP_STILL` /
+`XSTEP_MOVE` (ray width), `TAP_TURN` (degrees per edge tap), `PROFILE`,
+`BENCH`.
