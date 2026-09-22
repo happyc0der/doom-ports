@@ -136,6 +136,7 @@ class Engine {
     var wallTex;                      /* ByteArray [tex][x][y]             */
     var texBmp;                       /* [NWALLTEX*8*TEXCOLS] 1x32 bitmaps: (tex, shade, column) */
     var texAvg;                       /* [NWALLTEX*8] average colour, for faces too small to texture */
+    var stepBmp;                      /* [2*8*3*TEXCOLS] step faces of 4, 8, 12 texels: (slot, shade, k, column) */
     var sprDefs;                      /* [[gfx, base, w, h, mirror], ...]  */
     var sprBmp; var sprIdx; var sprPal; var sprKey;   /* per sprite bitmap */
     var sprOx; var sprOy; var sprBw; var sprBh;         /* opaque bbox inside the frame */
@@ -303,6 +304,7 @@ class Engine {
         cellKey = new [MAPW * MAPH]b;
         texBmp  = new [NWALLTEX * 8 * TEXCOLS];
         texAvg  = new [NWALLTEX * 8];
+        stepBmp = new [2 * 8 * 3 * TEXCOLS];
         /* sprite bitmaps: 20 soldier frames, mirrors for rotations 1..3,
          * 2 pickups, 2 projectiles */
         sprDefs = [];
@@ -755,6 +757,27 @@ class Engine {
                 y0 = y1;
             }
             texBmp[out + col] = bmp;
+
+            /* step faces are a whole-cell column clipped to their height,
+             * which costs two clip calls; textures 1 (floor steps) and 2
+             * (ceiling drops) also get exact 4/8/12-texel columns */
+            if (tex == 1 || tex == 2) {
+                for (var k = 1; k <= 3; k++) {
+                    var hh = k * 4;
+                    var sb = Graphics.createBufferedBitmap({ :width => 1, :height => hh, :palette => plist }).get();
+                    var sd = sb.getDc();
+                    var ya = 0;
+                    while (ya < hh) {
+                        var c2 = wallTex[cb + ya];
+                        var yb = ya + 1;
+                        while (yb < hh && wallTex[cb + yb] == c2) { yb++; }
+                        sd.setColor(lut[c2], Graphics.COLOR_TRANSPARENT);
+                        sd.fillRectangle(0, ya, 1, yb - ya);
+                        ya = yb;
+                    }
+                    stepBmp[((((tex - 1) << 3) + lv) * 3 + (k - 1)) * TEXCOLS + col] = sb;
+                }
+            }
         }
     }
 
@@ -1042,6 +1065,11 @@ class Engine {
          * and an edge within a pixel are filled as one rectangle */
         var fX = -1; var fW = 0; var fY = 0; var fB = 0; var fC = -1;
         var gX = -1; var gW = 0; var gY = 0; var gB = 0; var gC = -1;
+        var sbm = stepBmp;
+        /* an explicit clip makes the hardware cull the offscreen part of a
+         * near wall's column (scaled to thousands of rows); without it those
+         * rows are walked and the GPU stalls the next call */
+        dc.setClip(0, 0, SCR_W, VIEW_H); calls++;
 
         for (var r = r0; r < r1; r++) {
             var x = r * xs;
@@ -1170,7 +1198,7 @@ class Engine {
                         if (texels < 1) { texels = 1; }
                         if (clip) { dc.setClip(x, ytop, xw, ybot - ytop); calls++; }
                         dc.drawScaledBitmap(x, ypc, xw, (P * TEXH) / texels, tb[(((tid - 1) << 3) + lv) * TEXCOLS + tcol]); calls++;
-                        if (clip) { dc.clearClip(); calls++; }
+                        if (clip) { dc.setClip(0, 0, SCR_W, VIEW_H); calls++; }
                     }
                     zb[r] = pdist;
                     ytop = ybot;
@@ -1188,9 +1216,13 @@ class Engine {
                             dc.fillRectangle(x, t3, xw, ybot - t3); calls++;
                         } else if (P2 > 0 && t3 < ybot) {
                             var tx2 = (f - pf) >> 3; if (tx2 < 1) { tx2 = 1; }
-                            dc.setClip(x, t3, xw, ybot - t3); calls++;
-                            dc.drawScaledBitmap(x, yf, xw, (P2 * TEXH) / tx2, tb[(8 + lv) * TEXCOLS + tcol]); calls++;
-                            dc.clearClip(); calls++;
+                            if ((tx2 == 4 || tx2 == 8 || tx2 == 12) && t3 == yf && ybot == ypf) {
+                                dc.drawScaledBitmap(x, yf, xw, P2, sbm[((lv * 3) + ((tx2 >> 2) - 1)) * TEXCOLS + tcol]); calls++;
+                            } else {
+                                dc.setClip(x, t3, xw, ybot - t3); calls++;
+                                dc.drawScaledBitmap(x, yf, xw, (P2 * TEXH) / tx2, tb[(8 + lv) * TEXCOLS + tcol]); calls++;
+                                dc.setClip(0, 0, SCR_W, VIEW_H); calls++;
+                            }
                         }
                         ybot = t3;
                     }
@@ -1206,9 +1238,13 @@ class Engine {
                             dc.fillRectangle(x, ytop, xw, t4 - ytop); calls++;
                         } else if (P3 > 0 && ytop < t4) {
                             var tx3 = (pc - c) >> 3; if (tx3 < 1) { tx3 = 1; }
-                            dc.setClip(x, ytop, xw, t4 - ytop); calls++;
-                            dc.drawScaledBitmap(x, ypc, xw, (P3 * TEXH) / tx3, tb[(16 + lv) * TEXCOLS + tcol]); calls++;
-                            dc.clearClip(); calls++;
+                            if ((tx3 == 4 || tx3 == 8 || tx3 == 12) && ytop == ypc && t4 == yc) {
+                                dc.drawScaledBitmap(x, ypc, xw, P3, sbm[((8 + lv) * 3 + ((tx3 >> 2) - 1)) * TEXCOLS + tcol]); calls++;
+                            } else {
+                                dc.setClip(x, ytop, xw, t4 - ytop); calls++;
+                                dc.drawScaledBitmap(x, ypc, xw, (P3 * TEXH) / tx3, tb[(16 + lv) * TEXCOLS + tcol]); calls++;
+                                dc.setClip(0, 0, SCR_W, VIEW_H); calls++;
+                            }
                         }
                         ytop = t4;
                     }
@@ -1227,6 +1263,7 @@ class Engine {
         }
         if (fX >= 0) { if (fC != lc) { dc.setColor(fC, TR); lc = fC; } dc.fillRectangle(fX, fY, fW, fB - fY); calls++; }
         if (gX >= 0) { if (gC != lc) { dc.setColor(gC, TR); lc = gC; } dc.fillRectangle(gX, gY, gW, gB - gY); calls++; }
+        dc.clearClip(); calls++;
         mLastCol = lc;
         mCalls += calls;
     }
