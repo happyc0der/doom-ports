@@ -1,0 +1,32 @@
+# Calculator firmware: NEVER commit.
+# A ROM dump is your own calculator's OS and boot code - TI's copyrighted
+# firmware. Fine to hold for your own emulator, not redistributable.
+*.rom
+*.8xv
+ROMData*
+
+# Third-party binaries, fetched rather than vendored
+*.8xg
+
+# Build output
+obj/
+bin/
+*.o
+*.8xp
+hosttest/host
+hosttest/play
+hosttest/prof
+hosttest/sheet
+hosttest/probe
+
+# Scratch / scaffolding from the optimisation sessions
+send/
+ladder/
+doomce/
+probe/
+
+# Artefacts
+*.ppm
+*.png
+*.bak
+.DS_Store
