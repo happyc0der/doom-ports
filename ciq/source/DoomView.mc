@@ -47,9 +47,8 @@ class DoomView extends WatchUi.View {
  *   bottom button (BACK/ESC)    quit
  *   tap  left / right edge      turn   (burst; hold for continuous)
  *   tap  upper centre           forward
- *   tap  lower centre           back
- *   tap  centre square          open the door you are facing
- *   tap  HUD strip (bottom)     fire
+ *   tap  the gun (lower centre) fire
+ *   tap  HUD strip (bottom)     open the door you are facing
  *   swipe left / right          strafe
  *   swipe up / down             forward / back
  *   any tap after death         restart                                  */
@@ -62,12 +61,11 @@ class DoomDelegate extends WatchUi.BehaviorDelegate {
     }
 
     hidden function zoneOf(x, y) {
-        if (y >= VIEW_H) { return ACT_FIRE; }
+        if (y >= VIEW_H) { return ACT_USE; }
         if (x < 140)     { return ACT_LEFT; }
         if (x >= 308)    { return ACT_RIGHT; }
-        if (y < 140)     { return ACT_FWD; }
-        if (y < 260)     { return ACT_USE; }
-        return ACT_BACK;
+        if (y < 220)     { return ACT_FWD; }
+        return ACT_FIRE;
     }
 
     function onKey(evt) {
