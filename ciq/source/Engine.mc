@@ -23,6 +23,7 @@ import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.Math;
 import Toybox.System;
+import Toybox.WatchUi;
 
 /* ---------- configuration (Venu X1: 448 x 486 AMOLED) --------------- */
 
@@ -172,6 +173,7 @@ class Engine {
     var rng = 0x1234AB;
 
     var initStep = 0;
+    var logo = null;                  /* title logo, loaded on first draw   */
 
     /* 8 colour ramps x 32 brightness steps = 256 palette entries. */
     var rampRGB = [ [200,200,200], [195,85,65], [150,105,55], [116,124,92],
@@ -1244,15 +1246,16 @@ class Engine {
     function renderLoading(dc) {
         dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
         dc.clear();
-        dc.setColor(0xE0C050, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(SCR_W / 2, SCR_H / 2 - 50, Graphics.FONT_LARGE, "DOOMCE", Graphics.TEXT_JUSTIFY_CENTER);
+        if (logo == null) { logo = WatchUi.loadResource(Rez.Drawables.Logo); }
+        var lw = logo.getWidth(); var lh = logo.getHeight();
+        dc.drawBitmap((SCR_W - lw) / 2, SCR_H / 2 - lh - 20, logo);
         dc.setColor(0x9AA0A8, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(SCR_W / 2, SCR_H / 2 + 10, Graphics.FONT_SMALL, "generating art...", Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(SCR_W / 2, SCR_H / 2 + 6, Graphics.FONT_SMALL, "generating art...", Graphics.TEXT_JUSTIFY_CENTER);
         var w = taskN > 0 ? (SCR_W - 120) * initStep / taskN : 0;
-        dc.setColor(0x404850, Graphics.COLOR_TRANSPARENT);
-        dc.fillRectangle(60, SCR_H / 2 + 60, SCR_W - 120, 8);
-        dc.setColor(0xC35541, Graphics.COLOR_TRANSPARENT);
-        dc.fillRectangle(60, SCR_H / 2 + 60, w, 8);
+        dc.setColor(0x401410, Graphics.COLOR_TRANSPARENT);
+        dc.fillRectangle(60, SCR_H / 2 + 56, SCR_W - 120, 8);
+        dc.setColor(0xD74614, Graphics.COLOR_TRANSPARENT);
+        dc.fillRectangle(60, SCR_H / 2 + 56, w, 8);
     }
 
     /* ------------------------------------------------------------------

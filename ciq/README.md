@@ -70,13 +70,34 @@ Open **SdkManager**, sign in with your Garmin account, and download the
 ```
 
 `run.sh` restarts the simulator every time: `monkeydo` hangs silently if an app
-is already running in it.
+is already running in it. It launches the SDK Manager's copy of the simulator,
+not the one the Homebrew cask put in `/Applications` — that one can't find the
+SDK's `version.txt` and shows an error dialog on every launch.
 
 ## Install on the watch
 
-Connect the watch over USB and copy `bin/DoomCE-venux1.prg` into
-`GARMIN/Apps/`. It appears in the activity/app list as DOOMCE. No store
-submission needed.
+The Venu X1 is MTP-only over USB, so it does not mount as a drive on macOS.
+`tools/mtp_push.c` pushes a file straight into `GARMIN/Apps` with libmtp
+(the stock `mtp-sendfile` fails on this watch because it never sets a
+storage id):
+
+```sh
+brew install libmtp
+cd tools && cc -O2 $(pkg-config --cflags --libs libmtp) -o mtp_push mtp_push.c
+./mtp_push ../bin/DoomCE-venux1.prg DoomCE.prg
+```
+
+Plug the watch in, unlocked, before running it. It replaces any previous copy.
+Then unplug, and DOOMCE appears in the app list (developer mode must be on:
+Settings → System → About, tap the serial number seven times). No store
+submission needed. A GUI alternative is OpenMTP (`brew install --cask openmtp`):
+drag the `.prg` into `GARMIN/Apps`.
+
+## Art
+
+`tools/make_art.py` draws the launcher icon and the title logo from
+primitives — beveled fire-gradient block letters on a vignette. Run it after
+changing either; the PNGs are checked in.
 
 ## Controls (Venu X1: two buttons + touch)
 
