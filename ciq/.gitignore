@@ -1,0 +1,5 @@
+bin/
+developer_key
+developer_key.pem
+*.prg
+*.prg.debug.xml

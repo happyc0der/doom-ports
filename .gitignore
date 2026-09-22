@@ -31,3 +31,6 @@ probe/
 !docs/*.png
 *.bak
 .DS_Store
+
+# Connect IQ port keeps its icon; keys and build output are excluded in ciq/.gitignore
+!ciq/resources/drawables/*.png

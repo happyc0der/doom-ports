@@ -164,6 +164,14 @@ AUTOTESTER_ROM=/path/to/your.rom ~/CEdev/bin/cemu-autotester "$PWD/autotest.json
 
 ---
 
+## Garmin watch port
+
+[`ciq/`](ciq/) is the same engine rewritten in Monkey C for the Garmin Venu X1,
+verified in the Connect IQ simulator. See [ciq/README.md](ciq/README.md) — the
+interesting part is that the CE renderer's "runs of one colour" design maps
+directly onto `dc.fillRectangle`, and that the Connect IQ watchdog, not the
+CPU, is the constraint.
+
 ## A note from the author
 
 I had a lot of fun building this, and I'm not finished with it — I'll keep
