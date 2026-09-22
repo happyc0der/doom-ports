@@ -41,7 +41,9 @@ const NA_90    = 512;
 
 const PROJD    = 388;                 /* (SCR_W/2) / tan(30 deg)          */
 const XSTEP_STILL = 16;               /* pixels per ray when standing still (28 rays) */
-const XSTEP_MOVE  = 28;               /* pixels per ray while moving/turning (16 rays) */
+const XSTEP_MOVE  = 20;               /* pixels per ray while moving/turning (23 rays) */
+const TEXCOLS     = 16;               /* texture columns kept per texture (of 64) */
+const TAP_TURN    = 72;               /* angle units per edge tap (~13 degrees)   */
 const CACHE_SLICES = 4;               /* frames over which the wall cache is filled    */
 const NRAY_MAX    = 28;
 const DIST_MIN = 24;
@@ -113,7 +115,7 @@ class Engine {
     /* ---------- tables ---------- */
     var cosTab;  var icosTab;         /* [NA]                              */
     var colAngT; var colCosT;         /* [2] of per-ray tables, index = mode */
-    var nrayT = [28, 16];
+    var nrayT = [28, 23];
     var xstep = XSTEP_STILL; var nray = 28;                       /* of the walls on screen (sprites clip against them) */
     var zbufT; var dispMode = 0; var cacheFill = 0;
     var hudBmp = null; var rRgt;      /* static HUD strip                  */
@@ -123,13 +125,15 @@ class Engine {
     var cPx = -1; var cPy = -1; var cPa = -1; var cEye = -1; var cVcy = -1;
     var doorAnim = false;             /* a door moved this tick: walls must re-render */
     var wallsCached = 0;              /* profiling: frames that reused the wall buffer */
+    var vpx = 0; var vpy = 0; var vpa = 0; var vEye = 0; var vVcy = 0;   /* view state this frame renders */
+    var wantMore = false;             /* frame overran the timer: render again at once */
     var profN = 0;
     var atanTab;                      /* [65]                              */
     var shade;   var shadeE;          /* [8] of ByteArray[256]             */
     var pal;                          /* [3] of Array[256] rgb             */
     var shadeRGB; var shadeERGB;      /* [3][8] of Array[256] rgb          */
     var wallTex;                      /* ByteArray [tex][x][y]             */
-    var texBmp;                       /* [NWALLTEX*8] BufferedBitmap per (tex, shade) */
+    var texBmp;                       /* [NWALLTEX*8*TEXCOLS] 1x32 bitmaps: (tex, shade, column) */
     var sprDefs;                      /* [[gfx, base, w, h, mirror], ...]  */
     var sprBmp; var sprIdx; var sprPal; var sprKey;   /* per sprite bitmap */
     var sprOx; var sprOy; var sprBw; var sprBh;         /* opaque bbox inside the frame */
@@ -295,7 +299,7 @@ class Engine {
         rDist = new [nr]; rKind = new [nr]; rIdx = new [nr]; rRgt = new [nr];
         burst = new [9];
         cellKey = new [MAPW * MAPH]b;
-        texBmp  = new [NWALLTEX * 8];
+        texBmp  = new [NWALLTEX * 8 * TEXCOLS];
         /* sprite bitmaps: 20 soldier frames, mirrors for rotations 1..3,
          * 2 pickups, 2 projectiles */
         sprDefs = [];
@@ -711,37 +715,37 @@ class Engine {
      * pre-rendered once per (palette, frame) into a small palette bitmap
      * and blitted with a single drawScaledBitmap per frame.  If the device
      * cannot make buffered bitmaps, renderWeapon falls back to runs. */
-    /* one 64x32 palette bitmap per (texture, shade level).  Drawn as runs
-     * down each column; the palette is that texture's colours at that
-     * shade, so drawing needs no lookup at all. */
+    /* TEXCOLS one-pixel-wide palette bitmaps per (texture, shade level):
+     * a wall face is then one drawScaledBitmap of exactly its own width,
+     * and the hardware scales 32 pixels instead of a whole 64-column
+     * texture that is mostly clipped away. */
     function initTexBitmap(task) {
         var tex = task >> 3; var lv = task & 7;
         var lut = shadeRGB[lv];
         var base = tex * TEXW * TEXH;
-        var seen = new [256]b;
-        for (var i = 0; i < 256; i++) { seen[i] = 255; }
-        var plist = [];
-        for (var i = 0; i < TEXW * TEXH; i++) {
-            var c = wallTex[base + i];
-            if (seen[c] == 255) { seen[c] = plist.size(); plist.add(lut[c]); }
-        }
-        var ref = Graphics.createBufferedBitmap({ :width => TEXW, :height => TEXH, :palette => plist });
-        var bmp = ref.get();
-        var bdc = bmp.getDc();
-        var last = -1;
-        for (var cx = 0; cx < TEXW; cx++) {
-            var cb = base + cx * TEXH;
-            var y = 0;
-            while (y < TEXH) {
+        var out = task * TEXCOLS;
+        for (var col = 0; col < TEXCOLS; col++) {
+            var cb = base + (col * (TEXW / TEXCOLS)) * TEXH;
+            var seen = new [256]b;
+            for (var i = 0; i < 256; i++) { seen[i] = 255; }
+            var plist = [];
+            for (var y = 0; y < TEXH; y++) {
                 var c = wallTex[cb + y];
-                var y1 = y + 1;
-                while (y1 < TEXH && wallTex[cb + y1] == c) { y1++; }
-                if (c != last) { bdc.setColor(lut[c], Graphics.COLOR_TRANSPARENT); last = c; }
-                bdc.fillRectangle(cx, y, 1, y1 - y);
-                y = y1;
+                if (seen[c] == 255) { seen[c] = plist.size(); plist.add(lut[c]); }
             }
+            var bmp = Graphics.createBufferedBitmap({ :width => 1, :height => TEXH, :palette => plist }).get();
+            var bdc = bmp.getDc();
+            var y0 = 0;
+            while (y0 < TEXH) {
+                var c = wallTex[cb + y0];
+                var y1 = y0 + 1;
+                while (y1 < TEXH && wallTex[cb + y1] == c) { y1++; }
+                bdc.setColor(lut[c], Graphics.COLOR_TRANSPARENT);
+                bdc.fillRectangle(0, y0, 1, y1 - y0);
+                y0 = y1;
+            }
+            texBmp[out + col] = bmp;
         }
-        texBmp[task] = bmp;
     }
 
     /* one palette bitmap per sprite frame.  Entry 0 is transparent; the
@@ -1012,7 +1016,7 @@ class Engine {
         var xs = (mode == 0) ? XSTEP_STILL : XSTEP_MOVE;
         var key = cellKey; var wld = world; var hm = hmap; var dOpen = doorOpen;
         var zb = zbufT[mode]; var tb = texBmp; var sRGB = shadeRGB;
-        var pxx = px; var pyy = py; var paa = pa; var eye = eyeZ; var vcy = viewCy;
+        var pxx = vpx; var pyy = vpy; var paa = vpa; var eye = vEye; var vcy = vVcy;
         var pScale = projScale;
         var mapX0 = pxx >> FIX; var mapY0 = pyy >> FIX;
         var fracX = pxx & 255; var fracY = pyy & 255;
@@ -1024,6 +1028,10 @@ class Engine {
         var lc = -1;
         var TR = Graphics.COLOR_TRANSPARENT;
         var calls = 0;
+        /* pending floor / ceiling spans: adjacent rays with the same colour
+         * and an edge within a pixel are filled as one rectangle */
+        var fX = -1; var fW = 0; var fY = 0; var fB = 0; var fC = -1;
+        var gX = -1; var gW = 0; var gY = 0; var gB = 0; var gC = -1;
 
         for (var r = r0; r < r1; r++) {
             var x = r * xs;
@@ -1040,9 +1048,6 @@ class Engine {
             var guard = GUARD;
 
             zb[r] = DIST_MAX;
-            /* one clip per ray: every draw below stays in this column, and
-             * the texture draw relies on it to pick out its column */
-            dc.setClip(x, 0, xw, VIEW_H); calls++;
 
             if (cs < 0) { stepX = -1;    sdx = (fracX * ddx) >> FIX; }
             else        { stepX =  1;    sdx = ((ONE - fracX) * ddx) >> FIX; }
@@ -1088,8 +1093,15 @@ class Engine {
                     var t = ypf > ytop ? ypf : ytop;
                     if (ybot > t) {
                         var col = lut[COL_FLOOR];
-                        if (col != lc) { dc.setColor(col, TR); lc = col; }
-                        dc.fillRectangle(x, t, xw, ybot - t); calls++;
+                        if (fX >= 0 && fC == col && fX + fW == x && fB == ybot && t - fY <= 1 && fY - t <= 1) {
+                            fW += xw; if (t < fY) { fY = t; }
+                        } else {
+                            if (fX >= 0) {
+                                if (fC != lc) { dc.setColor(fC, TR); lc = fC; }
+                                dc.fillRectangle(fX, fY, fW, fB - fY); calls++;
+                            }
+                            fX = x; fW = xw; fY = t; fB = ybot; fC = col;
+                        }
                     }
                     ybot = t;
                 }
@@ -1097,8 +1109,15 @@ class Engine {
                     var t2 = ypc < ybot ? ypc : ybot;
                     if (t2 > ytop) {
                         var col2 = lut[COL_CEIL];
-                        if (col2 != lc) { dc.setColor(col2, TR); lc = col2; }
-                        dc.fillRectangle(x, ytop, xw, t2 - ytop); calls++;
+                        if (gX >= 0 && gC == col2 && gX + gW == x && gY == ytop && t2 - gB <= 1 && gB - t2 <= 1) {
+                            gW += xw; if (t2 > gB) { gB = t2; }
+                        } else {
+                            if (gX >= 0) {
+                                if (gC != lc) { dc.setColor(gC, TR); lc = gC; }
+                                dc.fillRectangle(gX, gY, gW, gB - gY); calls++;
+                            }
+                            gX = x; gW = xw; gY = ytop; gB = t2; gC = col2;
+                        }
                     }
                     ytop = t2;
                 }
@@ -1113,7 +1132,7 @@ class Engine {
                     wallx = (pxx + ((dist * cs) >> FIX)) & 255;
                     if (stepYW < 0) { wallx = 255 - wallx; }
                 }
-                var tcol = wallx >> 2;
+                var tcol = wallx >> 4;                     /* 0..TEXCOLS-1 */
 
                 if (tid != 0) {                                   /* solid block */
                     var P = ypf - ypc;
@@ -1125,7 +1144,8 @@ class Engine {
                         var clip = texels < 32 || (ytop > ypc && ytop > 0) || (ybot < ypf && ybot < VIEW_H);
                         if (texels < 1) { texels = 1; }
                         if (clip) { dc.setClip(x, ytop, xw, ybot - ytop); calls++; }
-                        dc.drawScaledBitmap(x - tcol * xs, ypc, TEXW * xs, (P * TEXH) / texels, tb[((tid - 1) << 3) + lv]); calls++;
+                        dc.drawScaledBitmap(x, ypc, xw, (P * TEXH) / texels, tb[(((tid - 1) << 3) + lv) * TEXCOLS + tcol]); calls++;
+                        if (clip) { dc.clearClip(); calls++; }
                     }
                     zb[r] = pdist;
                     ytop = ybot;
@@ -1140,8 +1160,8 @@ class Engine {
                         if (P2 > 0 && t3 < ybot) {
                             var tx2 = (f - pf) >> 3; if (tx2 < 1) { tx2 = 1; }
                             dc.setClip(x, t3, xw, ybot - t3); calls++;
-                            dc.drawScaledBitmap(x - tcol * xs, yf, TEXW * xs, (P2 * TEXH) / tx2, tb[8 + lv]); calls++;
-                            dc.setClip(x, 0, xw, VIEW_H); calls++;
+                            dc.drawScaledBitmap(x, yf, xw, (P2 * TEXH) / tx2, tb[(8 + lv) * TEXCOLS + tcol]); calls++;
+                            dc.clearClip(); calls++;
                         }
                         ybot = t3;
                     }
@@ -1154,8 +1174,8 @@ class Engine {
                         if (P3 > 0 && ytop < t4) {
                             var tx3 = (pc - c) >> 3; if (tx3 < 1) { tx3 = 1; }
                             dc.setClip(x, ytop, xw, t4 - ytop); calls++;
-                            dc.drawScaledBitmap(x - tcol * xs, ypc, TEXW * xs, (P3 * TEXH) / tx3, tb[16 + lv]); calls++;
-                            dc.setClip(x, 0, xw, VIEW_H); calls++;
+                            dc.drawScaledBitmap(x, ypc, xw, (P3 * TEXH) / tx3, tb[(16 + lv) * TEXCOLS + tcol]); calls++;
+                            dc.clearClip(); calls++;
                         }
                         ytop = t4;
                     }
@@ -1172,7 +1192,8 @@ class Engine {
                 if (ybot > mid) { if (bgF != lc) { dc.setColor(bgF, TR); lc = bgF; } dc.fillRectangle(x, mid, xw, ybot - mid); calls++; }
             }
         }
-        dc.clearClip();
+        if (fX >= 0) { if (fC != lc) { dc.setColor(fC, TR); lc = fC; } dc.fillRectangle(fX, fY, fW, fB - fY); calls++; }
+        if (gX >= 0) { if (gC != lc) { dc.setColor(gC, TR); lc = gC; } dc.fillRectangle(gX, gY, gW, gB - gY); calls++; }
         mLastCol = lc;
         mCalls += calls;
     }
@@ -1186,7 +1207,7 @@ class Engine {
 
     function drawBillboard(dc, fwd, rgt, wz, worldH, k, gwid, ghei, lv, type) {
         var scale = projScale / fwd;
-        var vcy = viewCy; var eye = eyeZ;
+        var vcy = vVcy; var eye = vEye;
         var yb = vcy + (((eye - wz) * scale) >> FIX);
         var yt = vcy + (((eye - (wz + worldH)) * scale) >> FIX);
         var h = yb - yt;
@@ -1245,8 +1266,8 @@ class Engine {
      * cheap, and everything after it is not. */
     function renderThings(dc) {
         var n = 0;
-        var cs = cosTab[pa]; var sn = cosTab[(pa - NA_90) & NA_MASK];
-        var pxx = px; var pyy = py;
+        var cs = cosTab[vpa]; var sn = cosTab[(vpa - NA_90) & NA_MASK];
+        var pxx = vpx; var pyy = vpy;
         var rd = rDist; var rk = rKind; var ri = rIdx; var rr = rRgt;
         var hm = hmap;
 
@@ -1353,7 +1374,7 @@ class Engine {
 
     function renderCrosshair(dc) {
         var c = pal[0][COL_XHAIR];
-        var cx = SCR_W / 2; var cy = viewCy;
+        var cx = SCR_W / 2; var cy = vVcy;
         fillRun(dc, cx - 14, cy - 1, 9, 3, c);
         fillRun(dc, cx + 6,  cy - 1, 9, 3, c);
         fillRun(dc, cx - 1, cy - 14, 3, 9, c);
@@ -1414,7 +1435,7 @@ class Engine {
      * bar fills, four texts */
     function renderHud(dc) {
         if (hudFull == null) { drawHud(dc, VIEW_H); return; }
-        if (health != hudH || ammo != hudA || kills != hudK || curFps != hudF) {
+        if (health != hudH || ammo != hudA || kills != hudK || (PROFILE && curFps != hudF)) {
             hudH = health; hudA = ammo; hudK = kills; hudF = curFps;
             drawHud(hudFullDc, 0);
         }
@@ -1437,10 +1458,12 @@ class Engine {
         dc.drawText(198, ty, font, ammo.format("%d"), Graphics.TEXT_JUSTIFY_LEFT);
         dc.setColor(p[26], Graphics.COLOR_TRANSPARENT);
         dc.drawText(348, ty, font, kills.format("%d"), Graphics.TEXT_JUSTIFY_LEFT);
-        dc.setColor(p[(3 << 5) | 28], Graphics.COLOR_TRANSPARENT);
-        dc.drawText(SCR_W - 44, by + 10, Graphics.FONT_XTINY,
-                    curFps.format("%d") + "fps " + frameCalls.format("%d") + "c",
-                    Graphics.TEXT_JUSTIFY_RIGHT);
+        if (PROFILE) {
+            dc.setColor(p[(3 << 5) | 28], Graphics.COLOR_TRANSPARENT);
+            dc.drawText(SCR_W - 44, by + 10, Graphics.FONT_XTINY,
+                        curFps.format("%d") + "fps " + frameCalls.format("%d") + "c",
+                        Graphics.TEXT_JUSTIFY_RIGHT);
+        }
         mLastCol = -1;
         mCalls += 7;
     }
@@ -1663,8 +1686,8 @@ class Engine {
             var adx = dx < 0 ? -dx : dx; var ady = dy < 0 ? -dy : dy;
             var adist = (adx > ady) ? adx + (ady >> 1) : ady + (adx >> 1);
             var see;
-            if (((tickN + i) % 3) == 0) {                    /* sight check is the AI's big cost */
-                see = deadTic == 0 && adist < 16 * ONE && los(aX[i], aY[i], px, py);
+            if (((tickN + i) & 3) == 0) {                    /* sight check is the AI's big cost */
+                see = deadTic == 0 && adist < 12 * ONE && los(aX[i], aY[i], px, py);
                 aSee[i] = see;
             } else {
                 see = aSee[i];
@@ -1716,6 +1739,10 @@ class Engine {
         if (deadTic >= 40) { wantRestart = true; return; }
         if (a == ACT_FIRE) { wantFire = true; return; }
         if (a == ACT_USE)  { wantUse = true; return; }
+        /* turning is a fixed step per tap, applied at once: bursts that
+         * accumulate over several frames overshoot the target */
+        if (a == ACT_LEFT)  { if (deadTic == 0) { pa = (pa - TAP_TURN) & NA_MASK; } return; }
+        if (a == ACT_RIGHT) { if (deadTic == 0) { pa = (pa + TAP_TURN) & NA_MASK; } return; }
         if (a != ACT_NONE) { burst[a] += frames; if (burst[a] > 40) { burst[a] = 40; } }
     }
 
@@ -1725,6 +1752,12 @@ class Engine {
     }
 
     function release() { held = ACT_NONE; }
+
+    /* drag to aim: a full screen width of drag is about a quarter turn */
+    function dragTurn(dx) {
+        if (deadTic != 0) { return; }
+        pa = (pa + (dx * 8) / 7) & NA_MASK;
+    }
 
     function active(a) {
         if (held == a) { return true; }
@@ -1739,7 +1772,6 @@ class Engine {
     /* Logic runs from the timer callback, rendering from onUpdate: two
      * separate callbacks, so each gets its own watchdog budget. */
     function tick() {
-        if (!initDone()) { initChunk(); return; }
         var tk0 = System.getTimer();
         tickN++;
 
@@ -1842,27 +1874,28 @@ class Engine {
         benchStep = st + 1;
     }
 
+    /* One frame.  Walls are issued first (they are the GPU's work), the
+     * logic tick runs while the GPU is busy, then sprites, weapon and HUD.
+     * Everything drawn uses the view state captured at the start, so walls
+     * and sprites agree even though the tick moved the player meanwhile. */
     function render(dc) {
-        if (!initDone()) { renderLoading(dc); return; }
-        if (BENCH && benchStep < 999) { bench(dc); return; }
+        if (!initDone()) { initChunk(); renderLoading(dc); wantMore = false; return; }
 
         mCalls = 0; mLastCol = -1; mIters = 0; frameN++;
         var t0 = System.getTimer();
-        var changed = (px != cPx || py != cPy || pa != cPa || eyeZ != cEye || viewCy != cVcy || doorAnim);
-        if (changed) { cPx = px; cPy = py; cPa = pa; cEye = eyeZ; cVcy = viewCy; cacheFill = 0; }
+        vpx = px; vpy = py; vpa = pa; vEye = eyeZ; vVcy = viewCy;
+
+        var changed = (vpx != cPx || vpy != cPy || vpa != cPa || vEye != cEye || vVcy != cVcy || doorAnim);
+        if (changed) { cPx = vpx; cPy = vpy; cPa = vpa; cEye = vEye; cVcy = vVcy; cacheFill = 0; }
         if (wallBuf == null) {
             dispMode = changed ? 1 : 0;
             renderWalls(dc, dispMode, 0, nrayT[dispMode]);
         } else if (cacheFill >= CACHE_SLICES) {
-            /* view unchanged and the cache is complete: one blit */
             dc.drawBitmap(0, 0, wallBuf);
             dispMode = 0;
             wallsCached++;
             mCalls++;
         } else {
-            /* moving, or just stopped: draw straight to the screen with coarse
-             * rays (the offscreen target is software-rendered and slow), and
-             * while the view holds still fill a quarter of the fine cache */
             dispMode = 1;
             renderWalls(dc, 1, 0, nrayT[1]);
             if (!changed) {
@@ -1876,8 +1909,11 @@ class Engine {
         xstep = (dispMode == 0) ? XSTEP_STILL : XSTEP_MOVE; nray = nrayT[dispMode]; zbuf = zbufT[dispMode];
         var t1 = System.getTimer();
         var wallIters = mIters;
-        renderThings(dc);
+
+        tick();                                   /* CPU only: overlaps the wall draws */
         var t2 = System.getTimer();
+
+        renderThings(dc);
         if (deadTic == 0) {
             renderCrosshair(dc);
             renderWeapon(dc);
@@ -1892,23 +1928,26 @@ class Engine {
         renderHud(dc);
         var t4 = System.getTimer();
         frameCalls = mCalls;
-        tWalls += t1 - t0; tThings += t2 - t1; tWeapon += t3 - t2; tHud += t4 - t3;
+        tWalls += t1 - t0; tThings += t3 - t2; tHud += t4 - t3;
 
-        var t = System.getTimer();
+        /* if this frame overran the timer period, do not wait for the next
+         * tick - that would round a 60 ms frame up to 100 ms */
+        wantMore = (t4 - t0) > TICK_MS - 8;
+
         if (lastT != 0) {
-            fpsAcc += t - lastT; fpsN++;
+            fpsAcc += t4 - lastT; fpsN++;
             if (fpsN >= 8) {
                 curFps = fpsAcc > 0 ? (8000 / fpsAcc) : 0;
                 var cached = wallsCached; wallsCached = 0;
                 fpsAcc = 0; fpsN = 0;
                 profN++;
                 if (PROFILE && (profN & 3) == 0) {          /* every 32 frames: log writes cost */
-                    System.println("fps=" + curFps + " calls=" + frameCalls + " wallIters=" + wallIters + " spriteIters=" + (mIters - wallIters)
-                                   + " cached=" + cached + " ms/8f walls=" + tWalls + " things=" + tThings + " weapon=" + tWeapon + " hud=" + tHud + " tick=" + tTick);
+                    System.println("fps=" + curFps + " calls=" + frameCalls + " wallIters=" + wallIters + " cached=" + cached
+                                   + " ms/8f walls=" + tWalls + " things+wpn=" + tThings + " hud=" + tHud + " tick=" + tTick);
                 }
                 tWalls = 0; tThings = 0; tWeapon = 0; tHud = 0; tTick = 0;
             }
         }
-        lastT = t;
+        lastT = t4;
     }
 }

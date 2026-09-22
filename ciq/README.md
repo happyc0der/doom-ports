@@ -28,21 +28,34 @@ log — `BENCH` in `Engine.mc`) rewrote the cost model:
 
 So the renderer is built around *number of calls*, not pixels:
 
-- **Every textured wall face is one clipped `drawScaledBitmap`** of a prebuilt
-  64×32 texture (4 textures × 8 shade levels). No texel loop.
+- **Every textured wall face is one `drawScaledBitmap`** of a prebuilt 1×32
+  texture column (4 textures × 8 shade levels × 16 columns = 512 tiny
+  bitmaps), drawn at exactly the ray's width. No texel loop, no clip for a
+  full-height face, and the GPU scales 32 pixels rather than a whole texture
+  that is then clipped away. (The first version drew the full 64-column
+  texture clipped to the ray; the GPU work for that showed up as a mystery
+  10–30 ms charged to whatever call came next.)
 - **Every sprite is one prebuilt palette bitmap per frame**, cropped to its
   opaque box, shaded with `setPalette`, drawn once per run of rays not hidden
   by a wall.
 - **The DDA compares a precomputed per-cell key**: the common "nothing changed"
   step is one byte read and one compare. The solid map border replaces the
   bounds checks.
-- **Rays are 16 px wide when standing still, 28 px while moving or turning.**
+- **Rays are 16 px wide when standing still, 20 px while moving or turning.**
 - **The wall pass is cached**: after you stop, it is rendered into an
   offscreen bitmap over four frames (a quarter each, no hitch) and then blitted
   with one call per frame until the view changes. Standing still costs ~12
   calls a frame.
+- **Floor and ceiling fills are merged across adjacent rays** when the colour
+  matches and the edge is within a pixel: a corridor's ~46 flat fills become
+  ~10.
+- **The logic tick runs between the wall draws and the sprite draws.** Draw
+  calls are asynchronous; the GPU finishes the walls while the CPU does the
+  AI, and both walls and sprites use the view state captured at frame start.
+- **A frame that overruns the 50 ms timer requests the next frame at once**
+  instead of waiting for the next tick, which would round 60 ms up to 100.
 - **Things are culled by a 90° cone** before any angle or frame maths; each
-  soldier re-checks line of sight every third tick.
+  soldier re-checks line of sight every fourth tick, within 12 cells.
 - **The HUD is composed into a bitmap when a value changes** and blitted every
   frame — the display is double-buffered, so skipping the HUD on some frames
   makes it blink.
@@ -115,17 +128,18 @@ changing either; the PNGs are checked in.
 
 | Input | Action |
 |---|---|
-| tap upper centre / swipe up | forward |
-| tap lower centre / swipe down | back |
-| tap left / right edge | turn |
-| swipe left / right | strafe |
-| tap centre | open the door you are facing |
-| tap the status bar / top button | fire |
-| long-press any move zone | keep moving |
+| **drag left / right** | aim — turns in proportion to the finger's travel |
+| tap left / right edge | turn a fixed 13° step |
+| tap upper middle / swipe up | forward |
+| swipe down | back |
+| tap **the gun** (lower middle) / top button | fire |
+| tap the status bar | open the door you are facing |
+| long-press a move zone | keep moving |
 | bottom button | quit |
 | any tap after death | restart |
 
-Taps accumulate, so mashing forward walks further.
+Forward taps accumulate, so mashing walks further. Turning does not
+accumulate: earlier builds let turn bursts pile up and the aim overshot.
 
 ## Profiling on the watch
 

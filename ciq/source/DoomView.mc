@@ -1,6 +1,7 @@
-/* The one full-screen view.  A repeating timer requests a redraw at a
- * fixed cadence; game logic and rendering both happen inside onUpdate so
- * they stay 1:1 with frames actually shown.  Between frames the CPU idles -
+/* The one full-screen view.  A repeating timer paces redraws; game logic
+ * and rendering both happen inside onUpdate (one frame = one tick), and a
+ * frame that overruns the timer period asks for the next one at once
+ * instead of waiting for the next tick.  Between frames the CPU idles -
  * this, not the renderer, is what keeps the battery cost down. */
 import Toybox.Graphics;
 import Toybox.Lang;
@@ -33,27 +34,28 @@ class DoomView extends WatchUi.View {
     }
 
     function onTick() as Void {
-        mEngine.tick();
         WatchUi.requestUpdate();
     }
 
     function onUpdate(dc) {
         mEngine.render(dc);
+        if (mEngine.wantMore) { WatchUi.requestUpdate(); }
     }
 }
 
 /* Touch + button input.  Venu X1 has two buttons and a touchscreen, so:
  *   top button (ENTER)          fire
  *   bottom button (BACK/ESC)    quit
- *   tap  left / right edge      turn   (burst; hold for continuous)
+ *   tap  left / right edge      turn a fixed step (hold for continuous)
+ *   drag left / right           aim (proportional)
  *   tap  upper centre           forward
  *   tap  the gun (lower centre) fire
  *   tap  HUD strip (bottom)     open the door you are facing
- *   swipe left / right          strafe
  *   swipe up / down             forward / back
  *   any tap after death         restart                                  */
 class DoomDelegate extends WatchUi.BehaviorDelegate {
     hidden var mEngine;
+    hidden var mDragX = 0;
 
     function initialize(engine) {
         BehaviorDelegate.initialize();
@@ -98,10 +100,17 @@ class DoomDelegate extends WatchUi.BehaviorDelegate {
 
     function onSwipe(evt) {
         var d = evt.getDirection();
-        if (d == WatchUi.SWIPE_LEFT)  { mEngine.action(ACT_SLEFT,  BURST); }
-        if (d == WatchUi.SWIPE_RIGHT) { mEngine.action(ACT_SRIGHT, BURST); }
-        if (d == WatchUi.SWIPE_UP)    { mEngine.action(ACT_FWD,    BURST); }
-        if (d == WatchUi.SWIPE_DOWN)  { mEngine.action(ACT_BACK,   BURST); }
+        if (d == WatchUi.SWIPE_UP)    { mEngine.action(ACT_FWD,  BURST); }
+        if (d == WatchUi.SWIPE_DOWN)  { mEngine.action(ACT_BACK, BURST); }
+        return true;
+    }
+
+    /* horizontal drag turns the view in proportion to the finger's travel */
+    function onDrag(evt) {
+        var c = evt.getCoordinates();
+        if (evt.getType() == WatchUi.DRAG_TYPE_START) { mDragX = c[0]; return true; }
+        var dx = c[0] - mDragX;
+        if (dx > 2 || dx < -2) { mEngine.dragTurn(dx); mDragX = c[0]; }
         return true;
     }
 }
