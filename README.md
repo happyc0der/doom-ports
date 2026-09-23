@@ -1,16 +1,31 @@
-# DOOMCE
+# doom-ports
 
-A first-person raycaster written from scratch for the **TI-84 Plus CE**.
+One from-scratch first-person raycaster, two very different machines:
 
-Textured walls, variable floor and ceiling heights, sliding doors, animated
-enemies with a state-machine AI, dodgeable projectiles, pickups and a status
-bar — in ~24 KB, on a 48 MHz eZ80.
+| | | |
+|---|---|---|
+| **DOOMCE** — TI-84 Plus CE | C + eZ80 assembly, ~24 KB, 5–7 fps on a 48 MHz eZ80 | [`src/`](src/), below |
+| **TRENCHFIRE** — Garmin Venu X1 | Monkey C, 20 fps still / ~15 moving, on the Connect IQ store | [`ciq/`](ciq/) |
 
-> **This is an original game, not a port.** It shares a genre and a pun with a
-> famous shooter and nothing else. The engine is written from first principles
-> and every sprite and texture is generated procedurally at startup by code in
-> this repository — there are no assets from any commercial game, and none are
-> required to build or play it.
+Textured walls, variable floor and ceiling heights, sliding doors, enemies with
+a state-machine AI, dodgeable projectiles, pickups and a status bar.
+
+> **This is an original game, not a port of anything.** It shares a genre and a
+> pun with a famous shooter and nothing else. The engine is written from first
+> principles and every sprite and texture is generated procedurally at startup
+> by code in this repository — there are no assets from any commercial game,
+> and none are required to build or play it. The watch version carries a
+> different name because a store listing should not lean on someone else's
+> trademark.
+
+| | |
+|---|---|
+| ![Calculator](docs/enemy.png) | ![Watch](ciq/store/screenshots/2-close-encounter.png) |
+| TI-84 Plus CE, 320×240 | Garmin Venu X1, 448×486 |
+
+---
+
+# DOOMCE — the calculator original
 
 ## Screenshots
 
@@ -164,16 +179,15 @@ AUTOTESTER_ROM=/path/to/your.rom ~/CEdev/bin/cemu-autotester "$PWD/autotest.json
 
 ---
 
-## Garmin watch port
+# TRENCHFIRE — the watch port
 
-[`ciq/`](ciq/) is the same engine rewritten in Monkey C for the Garmin Venu X1,
-published as **TRENCHFIRE** (a store listing cannot lean on someone else's
-trademark, pun or not):
-20 fps standing still, ~15 moving, on the watch. See
-[ciq/README.md](ciq/README.md) for the build, the USB install (the watch is
-MTP-only) and the measured cost model of the device — the interesting part is
-how far the design had to move from "runs of one colour" once every draw call
-cost 0.2 ms and every bitmap draw was free.
+[`ciq/`](ciq/) is the same engine rewritten in Monkey C for the Garmin Venu X1.
+The straight port ran at 1–2 fps; the shipped build runs at 20 fps standing
+still and ~15 moving. [ciq/README.md](ciq/README.md) has the build, the USB
+install (the watch is MTP-only, so there is a small libmtp pusher), the store
+submission kit, and the measured cost model of the device — the interesting
+part is how far the design had to move from "runs of one colour" once every
+draw call cost 0.2 ms and every bitmap draw was free.
 
 ## A note from the author
 
