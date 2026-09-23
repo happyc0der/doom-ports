@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build and install DOOMCE on a Venu X1 over USB (MTP).   Usage: ./install.sh
+# Build and install TRENCHFIRE on a Venu X1 over USB (MTP).   Usage: ./install.sh
 #
 # Needs libmtp (brew install libmtp).  Plug the watch in, unlocked; it can take
 # 10-20 s to appear on the bus.  Developer mode must be on for the watch to
@@ -15,5 +15,5 @@ until mtp-detect 2>/dev/null | grep -q "Garmin"; do
     i=$((i + 1)); [ "$i" -gt 12 ] && { echo "no watch on USB after 60 s" >&2; exit 1; }
     sleep 5
 done
-tools/mtp_push bin/DoomCE-venux1.prg DoomCE.prg
-echo "installed: unplug the watch and open DOOMCE from the app list"
+tools/mtp_push bin/Trenchfire-venux1.prg Trenchfire.prg
+echo "installed: unplug the watch and open TRENCHFIRE from the app list"

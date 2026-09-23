@@ -166,7 +166,9 @@ AUTOTESTER_ROM=/path/to/your.rom ~/CEdev/bin/cemu-autotester "$PWD/autotest.json
 
 ## Garmin watch port
 
-[`ciq/`](ciq/) is the same engine rewritten in Monkey C for the Garmin Venu X1:
+[`ciq/`](ciq/) is the same engine rewritten in Monkey C for the Garmin Venu X1,
+published as **TRENCHFIRE** (a store listing cannot lean on someone else's
+trademark, pun or not):
 20 fps standing still, ~15 moving, on the watch. See
 [ciq/README.md](ciq/README.md) for the build, the USB install (the watch is
 MTP-only) and the measured cost model of the device — the interesting part is

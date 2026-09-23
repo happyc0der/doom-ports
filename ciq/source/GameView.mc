@@ -1,4 +1,4 @@
-/* DOOMCE for Connect IQ - view, frame pacing and input.
+/* TRENCHFIRE for Connect IQ - view, frame pacing and input.
  * Copyright (C) 2026 happyc0der.  GPL-3.0-or-later, see ../LICENSE.
  *
  * The one full-screen view.  A repeating timer paces redraws; game logic
@@ -13,7 +13,7 @@ import Toybox.WatchUi;
 
 const TICK_MS = 50;                    /* ~20 fps target; the engine measures */
 
-class DoomView extends WatchUi.View {
+class GameView extends WatchUi.View {
     hidden var mEngine;
     hidden var mTimer;
 
@@ -56,7 +56,7 @@ class DoomView extends WatchUi.View {
  *   tap  HUD strip (bottom)     open the door you are facing
  *   swipe up / down             forward / back
  *   any tap after death         restart                                  */
-class DoomDelegate extends WatchUi.BehaviorDelegate {
+class GameDelegate extends WatchUi.BehaviorDelegate {
     hidden var mEngine;
     hidden var mDragX = 0;
 

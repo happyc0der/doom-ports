@@ -16,6 +16,6 @@ pkill -f "ConnectIQ.app/Contents/MacOS/simulator" 2>/dev/null || true
 sleep 1
 nohup "${SDK}bin/ConnectIQ.app/Contents/MacOS/simulator" > bin/simulator.log 2>&1 &
 sleep 6
-nohup "${SDK}bin/monkeydo" bin/DoomCE-venux1.prg venux1 > bin/sim.log 2>&1 &
+nohup "${SDK}bin/monkeydo" bin/Trenchfire-venux1.prg venux1 > bin/sim.log 2>&1 &
 sleep "$WAIT"
 tail -4 bin/sim.log

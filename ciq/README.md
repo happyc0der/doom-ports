@@ -1,6 +1,8 @@
-# DOOMCE for Garmin Connect IQ
+# TRENCHFIRE for Garmin Connect IQ
 
-The same raycaster as [`../src/main.c`](../src/main.c), rewritten in Monkey C
+The same raycaster as [`../src/main.c`](../src/main.c) (DOOMCE on the calculator;
+renamed for the store, where a name containing a registered trademark is a
+rejection waiting to happen), rewritten in Monkey C
 for the **Garmin Venu X1** (448×486 AMOLED, Connect IQ API 6). Textured walls,
 variable floor and ceiling heights, sliding doors, enemies with the same
 state-machine AI, dodgeable projectiles, pickups, status bar. All art is still
@@ -119,7 +121,7 @@ compiler, simulator and device files from the same SDK) and generates a
 developer signing key on first run:
 
 ```sh
-./build.sh              # → bin/DoomCE-venux1.prg
+./build.sh              # → bin/Trenchfire-venux1.prg
 ./run.sh                # build, restart the simulator, push, show its console for 25 s
 ```
 
@@ -144,12 +146,13 @@ or by hand:
 
 ```sh
 make -C tools
-tools/mtp_push bin/DoomCE-venux1.prg DoomCE.prg          # into GARMIN/Apps, replacing any old copy
+tools/mtp_push bin/Trenchfire-venux1.prg Trenchfire.prg  # into GARMIN/Apps, replacing any old copy
 ```
 
 Plug the watch in, unlocked; it can take 10–20 s to appear on the bus, and if
-it charges but never appears, re-seat the clip. Then unplug and DOOMCE is in
-the app list.
+it charges but never appears, re-seat the clip. Then unplug and TRENCHFIRE is in
+the app list. (If an older DOOMCE build is still on the watch it stays as a
+separate app; remove it with `mtp-delfile -n <id>`, id from `mtp-files`.)
 
 **Developer mode must be on** or the watch will not run a sideloaded app:
 Settings → System → About, tap the serial number seven times; a *Developer
@@ -183,12 +186,12 @@ accumulate: earlier builds let turn bursts pile up and the aim overshot.
 
 ## Profiling on the watch
 
-The watch appends `System.println` output to `GARMIN/Apps/LOGS/DoomCE.TXT`,
+The watch appends `System.println` output to `GARMIN/Apps/LOGS/Trenchfire.TXT`,
 but only if that file already exists. Create it once, build with
 `PROFILE = true` (top of `Engine.mc`), play, then pull the log:
 
 ```sh
-: > /tmp/DoomCE.TXT && tools/mtp_push /tmp/DoomCE.TXT DoomCE.TXT GARMIN/Apps/LOGS
+: > /tmp/Trenchfire.TXT && tools/mtp_push /tmp/Trenchfire.TXT Trenchfire.TXT GARMIN/Apps/LOGS
 # ... build with PROFILE = true, install, play ...
 tools/pull_log.sh       # saves the log and summarises still vs moving fps
 ```
@@ -202,7 +205,7 @@ on the watch (`mtp-delfile -n <id>`) to start fresh.
 ## Publishing to the Connect IQ store
 
 ```sh
-./release.sh            # → bin/DoomCE.iq, a release build for every product in the manifest
+./release.sh            # → bin/Trenchfire.iq, a release build for every product in the manifest
 ```
 
 Upload that file at <https://apps.garmin.com/developer/> (Add an App; needs
@@ -210,16 +213,15 @@ the same Garmin account as the SDK Manager, plus acceptance of the developer
 agreement). Every text field the form asks for — description, category,
 support contact, privacy statement — is pre-written in
 [store/listing.md](store/listing.md), and [store/screenshots/](store/screenshots/)
-holds 448×486 captures from the simulator (File → Save Screen Capture). Read
-the note on the app's name in that file before you submit.
+holds 448×486 captures from the simulator (File → Save Screen Capture).
 
 ## Layout
 
 ```
 manifest.xml            watch-app, venux1 only, no permissions
 monkey.jungle
-source/DoomCEApp.mc     entry point
-source/DoomView.mc      timer, onUpdate, touch/button delegate
+source/TrenchfireApp.mc entry point
+source/GameView.mc      timer, onUpdate, touch/button delegate
 source/Engine.mc        the game: tables, art, world, renderer, AI, frame loop
 resources/              app name, launcher icon, title logo
 build.sh                compile with the SDK Manager's current SDK
@@ -230,7 +232,8 @@ tools/pull_log.sh       fetch and summarise the on-device profile log
 tools/make_art.py       regenerates the icon and logo PNGs
 ```
 
-Knobs, all at the top of `Engine.mc` / `DoomView.mc`: `TICK_MS` (frame
+Knobs, all at the top of `Engine.mc` / `GameView.mc`: `TICK_MS` (frame
 cadence; 100 halves the battery cost of playing), `XSTEP_STILL` /
 `XSTEP_MOVE` (ray width), `TAP_TURN` (degrees per edge tap), `PROFILE`,
-`BENCH`.
+`BENCH`. The app's name lives in `resources/strings/strings.xml` and the logo
+in `tools/make_art.py`.

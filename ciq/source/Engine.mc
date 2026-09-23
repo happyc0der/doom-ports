@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------------
- * DOOMCE - Connect IQ port of the TI-84 Plus CE raycaster.
+ * TRENCHFIRE - Connect IQ port of DOOMCE, the TI-84 Plus CE raycaster.
  *
  * Copyright (C) 2026 happyc0der.  GPL-3.0-or-later, see ../LICENSE.
  *
@@ -1894,7 +1894,7 @@ class Engine {
     }
 
     /* One micro-benchmark per frame, printed to the log.  On the watch the
-     * log is GARMIN/Apps/LOGS/DoomCE.TXT (create the empty file first). */
+     * log is GARMIN/Apps/LOGS/Trenchfire.TXT (create the empty file first). */
     function bench(dc) {
         var t0 = System.getTimer(); var n = 0;
         var st = benchStep;

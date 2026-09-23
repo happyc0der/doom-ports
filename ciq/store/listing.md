@@ -1,13 +1,11 @@
 # Connect IQ Store listing
 
 Everything the "Add an App" form at https://apps.garmin.com/developer/ asks
-for, ready to paste. Upload `bin/DoomCE.iq` (made by `./release.sh`).
+for, ready to paste. Upload `bin/Trenchfire.iq` (made by `./release.sh`).
 
 ## Name
 
-DOOMCE
-
-> See the note on the name at the bottom before submitting.
+TRENCHFIRE
 
 ## Type / category
 
@@ -71,7 +69,7 @@ devices would need a different HUD layout.)
 The app collects no data of any kind, requests no permissions, and makes no
 network connections. Privacy policy text, if the form insists on one:
 
-> DOOMCE does not collect, store, or transmit any personal data. It requests
+> TRENCHFIRE does not collect, store, or transmit any personal data. It requests
 > no device permissions and has no network access. Contact:
 > keshav.rajput4@gmail.com.
 
@@ -90,18 +88,11 @@ network connections. Privacy policy text, if the form insists on one:
 Optional. `resources/drawables/logo.png` on a dark background works; the icon
 is `resources/drawables/launcher_icon.png` (65×65, as the manifest needs).
 
-## Note on the name
+## Why not the original name
 
-Garmin's review guidelines (section 3a) say: "Be careful using brand names …
-Your app may be the perfect complement for someone else's product or brand.
-That doesn't mean you have a right to use their intellectual property."
-"DOOM" is a registered trademark of id Software / ZeniMax (Microsoft). The
-engine, art and level are original — the README says so explicitly — but the
-*name* and the word "Doom" in a description are exactly what a trademark
-reviewer or an automated takedown looks at. The safe choice for the store is
-a name that does not contain "Doom" at all. It is a one-line change in
-`resources/strings/strings.xml` plus regenerating the logo in
-`tools/make_art.py` (add the letters the new name needs to `FONT`).
-
-Candidates that fit the WW2-infantry look: **TRENCHFIRE**, **PILLBOX**,
-**BUNKER RUN**, **FIELD GREY**.
+The engine is called DOOMCE on the calculator, and it is original work — but
+Garmin's review guidelines (section 3a) warn against using others' brand
+names, and "DOOM" is a registered trademark. The store listing, the app name,
+the logo and every file name use TRENCHFIRE; the description does not mention
+the trademark at all. Only the source repository keeps the old name for the
+calculator build.

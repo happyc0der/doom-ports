@@ -3,7 +3,7 @@
  * rejects ("could not get storage id from parent id"); this sets it.
  *
  *   cc -O2 $(pkg-config --cflags --libs libmtp) -o mtp_push mtp_push.c
- *   ./mtp_push ../bin/DoomCE-venux1.prg DoomCE.prg [GARMIN/Apps]        */
+ *   ./mtp_push ../bin/Trenchfire-venux1.prg Trenchfire.prg [GARMIN/Apps]        */
 #include <libmtp.h>
 #include <stdio.h>
 #include <stdlib.h>

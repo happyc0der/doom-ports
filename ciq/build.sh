@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build DOOMCE for a Connect IQ device.   Usage: ./build.sh [device]   (default venux1)
+# Build TRENCHFIRE for a Connect IQ device.   Usage: ./build.sh [device]   (default venux1)
 #
 # Uses the SDK the Connect IQ SDK Manager marked current (it also installs the
 # device definitions), falling back to a monkeyc on PATH.  Needs a JDK.
@@ -28,6 +28,6 @@ if [ ! -f developer_key ]; then
     openssl pkcs8 -topk8 -inform PEM -outform DER -in developer_key.pem -out developer_key -nocrypt
 fi
 mkdir -p bin
-"$MONKEYC" -o "bin/DoomCE-$DEV.prg" -f monkey.jungle -y developer_key -d "$DEV" -l 0 2>&1 | grep -v WARNING || true
-[ -f "bin/DoomCE-$DEV.prg" ] && [ -z "$(find source -newer "bin/DoomCE-$DEV.prg")" ] || { echo "BUILD FAILED" >&2; exit 1; }
-echo "built bin/DoomCE-$DEV.prg"
+"$MONKEYC" -o "bin/Trenchfire-$DEV.prg" -f monkey.jungle -y developer_key -d "$DEV" -l 0 2>&1 | grep -v WARNING || true
+[ -f "bin/Trenchfire-$DEV.prg" ] && [ -z "$(find source -newer "bin/Trenchfire-$DEV.prg")" ] || { echo "BUILD FAILED" >&2; exit 1; }
+echo "built bin/Trenchfire-$DEV.prg"

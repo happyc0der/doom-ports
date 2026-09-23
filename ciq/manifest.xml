@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
-<!-- DOOMCE for Connect IQ.  A plain watch-app: no permissions, no background
+<!-- TRENCHFIRE for Connect IQ.  A plain watch-app: no permissions, no background
      service, no sensors.  It only runs while it is open on screen. -->
 <iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
     <iq:application id="5f5dd664-bf0f-4dd8-ab3a-b3c8c7082bc1"
                     type="watch-app"
                     name="@Strings.AppName"
-                    entry="DoomCEApp"
+                    entry="TrenchfireApp"
                     launcherIcon="@Drawables.LauncherIcon"
                     minApiLevel="4.2.0">
         <iq:products>
