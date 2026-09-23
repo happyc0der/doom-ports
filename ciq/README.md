@@ -199,6 +199,20 @@ shows fps and call count in the HUD. `BENCH = true` runs the micro-benchmarks
 behind the cost table above at start-up. The log grows across runs; delete it
 on the watch (`mtp-delfile -n <id>`) to start fresh.
 
+## Publishing to the Connect IQ store
+
+```sh
+./release.sh            # → bin/DoomCE.iq, a release build for every product in the manifest
+```
+
+Upload that file at <https://apps.garmin.com/developer/> (Add an App; needs
+the same Garmin account as the SDK Manager, plus acceptance of the developer
+agreement). Every text field the form asks for — description, category,
+support contact, privacy statement — is pre-written in
+[store/listing.md](store/listing.md), and [store/screenshots/](store/screenshots/)
+holds 448×486 captures from the simulator (File → Save Screen Capture). Read
+the note on the app's name in that file before you submit.
+
 ## Layout
 
 ```

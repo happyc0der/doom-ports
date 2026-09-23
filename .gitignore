@@ -34,3 +34,6 @@ probe/
 
 # Connect IQ port keeps its icon; keys and build output are excluded in ciq/.gitignore
 !ciq/resources/drawables/*.png
+
+# store screenshots for the Connect IQ listing
+!ciq/store/screenshots/*.png
